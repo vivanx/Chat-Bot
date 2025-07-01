@@ -89,4 +89,4 @@ async def main():
     await idle()
 
 if __name__ == "__main__":
-    app.run(main())
+    app.run()
