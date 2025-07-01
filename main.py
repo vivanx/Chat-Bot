@@ -4,7 +4,10 @@ import requests
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message
 from pyrogram.enums import ChatAction
+from pyrogram.errors import FloodWait
 import asyncio
+from collections import deque
+import time
 
 # Configuration
 API_ID = "12380656"  # Get from my.telegram.org
@@ -23,6 +26,11 @@ Keep responses ultra short (1 sentence), seductive, slightly rude, and playful, 
 Use casual, spicy Hinglish like "Kya baat hai, dil jala diya 🔥", "Haye, itna hot kyun hai tu 😏", or "Baat kar, bore mat kar 💋". 
 Sound natural, steamy, and teasing, like a girlfriend roasting her boyfriend in a group chat.
 """
+
+# Message queue for rate limiting
+message_queue = deque()
+last_message_time = 0
+MIN_MESSAGE_INTERVAL = 1.0  # Minimum 1 second between messages
 
 async def get_gemini_response(user_message: str) -> str:
     """Fetch short, sexy, rude response from Gemini API in Hinglish style."""
@@ -48,10 +56,34 @@ async def get_gemini_response(user_message: str) -> str:
         print(f"Error with Gemini API: {e}")
         return "Uff, tu toh hadd karta hai 😏 Bol na, kya chahiye? 🔥"
 
+async def process_message_queue():
+    """Process messages from the queue with rate limiting."""
+    global last_message_time
+    while True:
+        if message_queue:
+            client, message, response = message_queue.popleft()
+            # Ensure minimum interval between messages
+            current_time = time.time()
+            time_since_last = current_time - last_message_time
+            if time_since_last < MIN_MESSAGE_INTERVAL:
+                await asyncio.sleep(MIN_MESSAGE_INTERVAL - time_since_last)
+            
+            try:
+                await client.send_message(message.chat.id, response, reply_to_message_id=message.id)
+                last_message_time = time.time()
+            except FloodWait as e:
+                print(f"FloodWait: Waiting for {e.value} seconds")
+                await asyncio.sleep(e.value)
+                message_queue.append((client, message, response))  # Re-queue the message
+            except Exception as e:
+                print(f"Error sending message: {e}")
+        await asyncio.sleep(0.1)  # Prevent tight loop
+
 @app.on_message(filters.command("start") & (filters.private | filters.group))
 async def start_command(client: Client, message: Message):
     """Handle /start command with a short, sexy, rude response."""
-    await message.reply_text(f"Oye, shuru ho gayi main! 🔥 Ab kya plan hai, hero? 😏")
+    response = f"Oye, shuru ho gayi main! 🔥 Ab kya plan hai, hero? 😏"
+    message_queue.append((client, message, response))
 
 @app.on_message((filters.text & ~filters.command(["start"])) & (filters.private | filters.group))
 async def handle_message(client: Client, message: Message):
@@ -71,9 +103,14 @@ async def handle_message(client: Client, message: Message):
         ]
         is_owner_query = any(re.search(pattern, user_message) for pattern in owner_keywords)
 
-        # Show typing action for natural feel
-        await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-        await asyncio.sleep(0.3)  # Quick response for attitude
+        # Show typing action sparingly to reduce API calls
+        if is_mention:  # Only for mentions, not replies
+            try:
+                await client.send_chat_action(message.chat.id, ChatAction.TYPING)
+                await asyncio.sleep(0.3)
+            except FloodWait as e:
+                print(f"FloodWait on typing action: Waiting for {e.value} seconds")
+                await asyncio.sleep(e.value)
 
         if is_owner_query:
             response = "Vivan ne banaya, hot hai na? 😏 Ab tu bol, kya chahiye? 🔥"
@@ -81,13 +118,15 @@ async def handle_message(client: Client, message: Message):
             # Get short, sexy, rude response from Gemini API
             response = await get_gemini_response(message.text)
 
-        # Reply to the user
-        await message.reply_text(response)
+        # Add response to message queue
+        message_queue.append((client, message, response))
 
 async def main():
-    """Start the bot."""
+    """Start the bot and message queue processor."""
     await app.start()
     print("Bot is running! 🔥")
+    # Start the message queue processor
+    asyncio.create_task(process_message_queue())
     await idle()
 
 if __name__ == "__main__":
