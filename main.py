@@ -2,11 +2,12 @@ import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import asyncio
+import os
 
 # Telegram Bot Configuration
-API_ID = "12380656"  # Get from https://my.telegram.org
-API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
-BOT_TOKEN = "7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI"  # Get from BotFather
+API_ID = "12380656"
+API_HASH = "d927c13beaaf5110f25c505b7c071273"
+BOT_TOKEN = "7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI"
 
 # starryAI API Configuration
 STARRYAI_API_URL = "https://api.starryai.com/creations/"
@@ -29,6 +30,22 @@ def check_task_status(creation_id):
         return {"error": f"Status check failed with code {response.status_code}: {response.text}"}
     except Exception as e:
         return {"error": f"Status check error: {str(e)}"}
+
+# Download image as .jpg and return local path
+def download_image_as_jpg(url, index):
+    try:
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            file_path = f"image_{index}.jpg"
+            with open(file_path, "wb") as f:
+                for chunk in response.iter_content(1024):
+                    f.write(chunk)
+            return file_path
+        else:
+            return None
+    except Exception as e:
+        print(f"Download error: {e}")
+        return None
 
 # Command Handler for /generate
 @app.on_message(filters.command("generate") & filters.group)
@@ -73,8 +90,13 @@ async def generate_image(client: Client, message: Message):
                 image_urls = status_data.get("imageUrls") or status_data.get("images", [])
 
                 if status == "completed" and image_urls:
-                    for url in image_urls:
-                        await message.reply_photo(photo=url)
+                    for idx, url in enumerate(image_urls):
+                        jpg_path = download_image_as_jpg(url, idx)
+                        if jpg_path:
+                            await message.reply_photo(photo=jpg_path)
+                            os.remove(jpg_path)  # Clean up after sending
+                        else:
+                            await message.reply(f"Failed to download image from: {url}")
                     return
                 elif status == "failed":
                     await message.reply(f"Image generation failed: {status_data.get('error', 'Unknown error')}")
