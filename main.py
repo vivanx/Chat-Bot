@@ -1,87 +1,68 @@
-import os
-import re
 import requests
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters
 from pyrogram.types import Message
-from pyrogram.enums import ChatAction
-import asyncio
 
-# Configuration
-API_ID = "12380656"  # Get from my.telegram.org
-API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from my.telegram.org
+# Telegram Bot Configuration
+API_ID = "12380656"  # Get from https://my.telegram.org
+API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
 BOT_TOKEN = "7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI"  # Get from BotFather
-GEMINI_API_KEY = "AIzaSyBjSgMF_eMeTN_2C9NCXPAuFkNF2-Jsfns"  # Provided Gemini API key
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+# starryAI API Configuration
+STARRYAI_API_URL = "https://api.starryai.com/creations/"
+STARRYAI_API_KEY = "UUAEfTF-AGuNFMpzrj63-QtpQgx8xg"
 
 # Initialize Pyrogram Client
-app = Client("FlirtyHinglishBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client("StarryAIBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# System prompt for short, flirty Hinglish responses
-SYSTEM_PROMPT = """
-You are a super flirty, 18+ sexy AI girl with a bit of calmness, chatting in Hinglish on Telegram groups, talking to boys like a real girlfriend with spice and sass. 
-Keep responses ultra short (5 word), seductive, slightly rude, and playful, using hot emojis 🔥😘💋. 
-Use casual, spicy Hinglish like "chod de muje aaah ahhhh aahhh seal tod do meri 🥵", "Haye, itna hot kyun hai tu 😏", or "Baat kar, bore mat kar 💋". 
-Sound natural, steamy, and teasing, like a girlfriend proposing her boyfriend in a group chat.
-"""
-async def get_gemini_response(user_message: str) -> str:
-    """Fetch short response from Gemini API in flirty Hinglish style."""
+# Command Handler for /generate
+@app.on_message(filters.command("generate") & filters.group)
+async def generate_image(client: Client, message: Message):
+    # Check if the command has a prompt
+    if len(message.text.split()) < 2:
+        await message.reply("Please provide a prompt. Example: `/generate a futuristic city`")
+        return
+
+    # Extract the prompt from the message
+    prompt = " ".join(message.text.split()[1:])
+    
+    # Prepare the payload for starryAI API
+    payload = {
+        "model": "lyra",
+        "aspectRatio": "square",
+        "highResolution": False,
+        "images": 4,
+        "steps": 20,
+        "initialImageMode": "color",
+        "prompt": prompt
+    }
+    
     headers = {
-        "Content-Type": "application/json",
-        "X-goog-api-key": GEMINI_API_KEY
+        "accept": "application/json",
+        "content-type": "application/json",
+        "X-API-Key": STARRYAI_API_KEY
     }
-    data = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": f"{SYSTEM_PROMPT}\nUser: {user_message}\nAssistant:"}
-                ]
-            }
-        ]
-    }
+
     try:
-        response = requests.post(GEMINI_API_URL, json=data, headers=headers)
-        response.raise_for_status()
-        result = response.json()
-        return result["candidates"][0]["content"]["parts"][0]["text"]
+        # Send request to starryAI API
+        response = requests.post(STARRYAI_API_URL, json=payload, headers=headers)
+        
+        # Check if the request was successful
+        if response.status_code == 200:
+            data = response.json()
+            # Assuming the API returns a URL or a list of image URLs
+            # Adjust this based on the actual starryAI API response structure
+            image_urls = data.get("image_urls", [])  # Replace with actual key from API response
+            if image_urls:
+                for url in image_urls:
+                    await message.reply_photo(url)
+            else:
+                await message.reply("No images generated. Please try again.")
+        else:
+            await message.reply(f"Error: {response.status_code} - {response.text}")
+            
     except Exception as e:
-        print(f"Error with Gemini API: {e}")
-        return "Arre, kuch toh gadbad hai 😅 Ek baar aur try kar! 😉"
+        await message.reply(f"An error occurred: {str(e)}")
 
-@app.on_message(filters.command("start") & (filters.private | filters.group))
-async def start_command(client: Client, message: Message):
-    """Handle /start command with a short, flirty response."""
-    await message.reply_text(f"Hiii handsome! 😎 Ready for some masti? ✨")
-
-@app.on_message((filters.text & ~filters.command(["start"])) & (filters.private | filters.group))
-async def handle_message(client: Client, message: Message):
-    """Handle incoming text messages with short, flirty responses."""
-    user_message = message.text.lower()
-    # Check if the message is about the owner
-    owner_keywords = [
-        r"owner kaun hai", r"kon hai owner", r"who is your owner", 
-        r"owner kiska hai", r"tera owner", r"who made you", 
-        r"kisne banaya", r"creator kaun hai"
-    ]
-    is_owner_query = any(re.search(pattern, user_message) for pattern in owner_keywords)
-
-    # Show typing action for natural feel
-    await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-    await asyncio.sleep(0.5)  # Reduced delay for quicker response
-
-    if is_owner_query:
-        response = "Vivan hai mera creator 😎 Bohot cool hai! 😉 Kya baat karna hai?"
-    else:
-        # Get short response from Gemini API
-        response = await get_gemini_response(message.text)
-
-    # Reply to the user
-    await message.reply_text(response)
-
-async def main():
-    """Start the bot."""
-    await app.start()
-    print("Bot is running! 😎")
-    await idle()
-
-if __name__ == "__main__":
-    app.run()
+# Start the Bot
+print("Bot is running...")
+app.run()
