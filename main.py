@@ -8,6 +8,11 @@ from pyrogram.errors import FloodWait
 import asyncio
 from collections import deque
 import time
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Configuration
 API_ID = "12380656"  # Get from my.telegram.org
@@ -34,18 +39,9 @@ MIN_MESSAGE_INTERVAL = 1.0  # Minimum 1 second between messages
 
 async def get_gemini_response(user_message: str) -> str:
     """Fetch short, sexy, rude response from Gemini API in Hinglish style."""
-    headers = {
-        "Content-Type": "application/json",
-        "X-goog-api-key": GEMINI_API_KEY
-    }
+    headers = {"Content-Type": "application/json", "X-goog-api-key": GEMINI_API_KEY}
     data = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": f"{SYSTEM_PROMPT}\nUser: {user_message}\nAssistant:"}
-                ]
-            }
-        ]
+        "contents": [{"parts": [{"text": f"{SYSTEM_PROMPT}\nUser: {user_message}\nAssistant:"}]}]
     }
     try:
         response = requests.post(GEMINI_API_URL, json=data, headers=headers)
@@ -53,7 +49,7 @@ async def get_gemini_response(user_message: str) -> str:
         result = response.json()
         return result["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        print(f"Error with Gemini API: {e}")
+        logger.error(f"Gemini API error: {e}")
         return "Uff, tu toh hadd karta hai 😏 Bol na, kya chahiye? 🔥"
 
 async def process_message_queue():
@@ -62,7 +58,6 @@ async def process_message_queue():
     while True:
         if message_queue:
             client, message, response = message_queue.popleft()
-            # Ensure minimum interval between messages
             current_time = time.time()
             time_since_last = current_time - last_message_time
             if time_since_last < MIN_MESSAGE_INTERVAL:
@@ -71,12 +66,13 @@ async def process_message_queue():
             try:
                 await client.send_message(message.chat.id, response, reply_to_message_id=message.id)
                 last_message_time = time.time()
+                logger.info(f"Sent response to {message.chat.id}: {response}")
             except FloodWait as e:
-                print(f"FloodWait: Waiting for {e.value} seconds")
+                logger.warning(f"FloodWait: Waiting for {e.value} seconds")
                 await asyncio.sleep(e.value)
-                message_queue.append((client, message, response))  # Re-queue the message
+                message_queue.append((client, message, response))  # Re-queue
             except Exception as e:
-                print(f"Error sending message: {e}")
+                logger.error(f"Error sending message: {e}")
         await asyncio.sleep(0.1)  # Prevent tight loop
 
 @app.on_message(filters.command("start") & (filters.private | filters.group))
@@ -84,6 +80,7 @@ async def start_command(client: Client, message: Message):
     """Handle /start command with a short, sexy, rude response."""
     response = f"Oye, shuru ho gayi main! 🔥 Ab kya plan hai, hero? 😏"
     message_queue.append((client, message, response))
+    logger.info(f"Start command received in chat {message.chat.id}")
 
 @app.on_message((filters.text & ~filters.command(["start"])) & (filters.private | filters.group))
 async def handle_message(client: Client, message: Message):
@@ -91,9 +88,10 @@ async def handle_message(client: Client, message: Message):
     bot = await client.get_me()
     # Check if the message is a reply to the bot or mentions the bot
     is_reply_to_bot = message.reply_to_message and message.reply_to_message.from_user.id == bot.id
-    is_mention = bot.username in message.text if bot.username else False
+    is_mention = message.mentioned  # More reliable than string matching
 
     if is_reply_to_bot or is_mention:
+        logger.info(f"Processing message in {message.chat.id}: {message.text}")
         user_message = message.text.lower()
         # Check if the message is about the owner
         owner_keywords = [
@@ -103,28 +101,44 @@ async def handle_message(client: Client, message: Message):
         ]
         is_owner_query = any(re.search(pattern, user_message) for pattern in owner_keywords)
 
-        # Show typing action sparingly to reduce API calls
-        if is_mention:  # Only for mentions, not replies
+        # Show typing action sparingly
+        if is_mention:
             try:
                 await client.send_chat_action(message.chat.id, ChatAction.TYPING)
                 await asyncio.sleep(0.3)
             except FloodWait as e:
-                print(f"FloodWait on typing action: Waiting for {e.value} seconds")
+                logger.warning(f"FloodWait on typing action: Waiting for {e.value} seconds")
                 await asyncio.sleep(e.value)
+            except Exception as e:
+                logger.error(f"Error sending typing action: {e}")
 
         if is_owner_query:
             response = "Vivan ne banaya, hot hai na? 😏 Ab tu bol, kya chahiye? 🔥"
         else:
-            # Get short, sexy, rude response from Gemini API
             response = await get_gemini_response(message.text)
 
         # Add response to message queue
         message_queue.append((client, message, response))
+    else:
+        logger.debug(f"Ignored message in {message.chat.id}: Not a reply or mention")
+
+async def check_permissions():
+    """Check if bot has necessary permissions in groups."""
+    bot = await app.get_me()
+    async for chat in app.iter_chat_members(bot.id, filter="administrators"):
+        try:
+            member = await app.get_chat_member(chat.chat.id, bot.id)
+            if not member.can_send_messages:
+                logger.warning(f"Bot lacks send message permission in chat {chat.chat.id}")
+        except Exception as e:
+            logger.error(f"Error checking permissions in chat {chat.chat.id}: {e}")
 
 async def main():
     """Start the bot and message queue processor."""
     await app.start()
-    print("Bot is running! 🔥")
+    logger.info("Bot is running! 🔥")
+    # Check permissions on startup
+    await check_permissions()
     # Start the message queue processor
     asyncio.create_task(process_message_queue())
     await idle()
