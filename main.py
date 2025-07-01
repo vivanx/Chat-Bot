@@ -1,7 +1,7 @@
 import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import time
+import asyncio
 
 # Telegram Bot Configuration
 API_ID = "12380656"  # Get from https://my.telegram.org
@@ -33,15 +33,12 @@ def check_task_status(creation_id):
 # Command Handler for /generate
 @app.on_message(filters.command("generate") & filters.group)
 async def generate_image(client: Client, message: Message):
-    # Check if the command has a prompt
     if len(message.text.split()) < 2:
         await message.reply("Please provide a prompt. Example: `/generate a futuristic city`")
         return
 
-    # Extract the prompt from the message
     prompt = " ".join(message.text.split()[1:])
-    
-    # Prepare the payload for starryAI API
+
     payload = {
         "model": "lyra",
         "aspectRatio": "square",
@@ -51,7 +48,7 @@ async def generate_image(client: Client, message: Message):
         "initialImageMode": "color",
         "prompt": prompt
     }
-    
+
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -59,51 +56,39 @@ async def generate_image(client: Client, message: Message):
     }
 
     try:
-        # Send POST request to initiate image generation
         response = requests.post(STARRYAI_API_URL, json=payload, headers=headers)
         
-        # Check if the request was successful
         if response.status_code == 200:
             data = response.json()
-            print("POST Response:", data)  # Debug: Print raw API response
-            
-            # Check for creation_id
             creation_id = data.get("creation_id") or data.get("id")
             if not creation_id:
                 await message.reply(f"No creation_id returned. API response: {data}")
                 return
 
-            # Notify user that generation is in progress
-            await message.reply("Image generation in progress. Checking status...")
+            await message.reply("Image generation started. Checking status every 10 seconds...")
 
-            # Poll for task completion
-            for _ in range(10):  # Try up to 10 times (adjust as needed)
+            for attempt in range(10):
                 status_data = check_task_status(creation_id)
-                print("Status Response:", status_data)  # Debug: Print status response
-                
-                # Check for images or status
                 status = status_data.get("status")
-                image_urls = status_data.get("images", [])  # Adjust based on actual response key
-                
+                image_urls = status_data.get("imageUrls") or status_data.get("images", [])
+
                 if status == "completed" and image_urls:
                     for url in image_urls:
-                        await message.reply_photo(url)
+                        await message.reply_photo(photo=url)
                     return
                 elif status == "failed":
                     await message.reply(f"Image generation failed: {status_data.get('error', 'Unknown error')}")
                     return
-                elif status == "processing":
-                    await message.reply(f"Still processing (attempt {_+1}/10)...")
                 elif "error" in status_data:
                     await message.reply(f"Status error: {status_data['error']}")
                     return
-                
-                time.sleep(10)  # Wait 10 seconds before next status check
-                
+
+                await asyncio.sleep(10)
+
             await message.reply("Image generation timed out. Please try again later.")
         else:
             await message.reply(f"API Error: {response.status_code} - {response.text}")
-            
+
     except Exception as e:
         await message.reply(f"An error occurred: {str(e)}")
 
