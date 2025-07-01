@@ -1,6 +1,7 @@
 import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
+import time
 
 # Telegram Bot Configuration
 API_ID = "12380656"  # Get from https://my.telegram.org
@@ -13,6 +14,21 @@ STARRYAI_API_KEY = "UUAEfTF-AGuNFMpzrj63-QtpQgx8xg"
 
 # Initialize Pyrogram Client
 app = Client("StarryAIBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# Function to check task status using creation_id
+def check_task_status(creation_id):
+    status_url = f"https://api.starryai.com/creations/{creation_id}"
+    headers = {
+        "accept": "application/json",
+        "X-API-Key": STARRYAI_API_KEY
+    }
+    try:
+        response = requests.get(status_url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        return {"error": f"Status check failed with code {response.status_code}: {response.text}"}
+    except Exception as e:
+        return {"error": f"Status check error: {str(e)}"}
 
 # Command Handler for /generate
 @app.on_message(filters.command("generate") & filters.group)
@@ -43,22 +59,50 @@ async def generate_image(client: Client, message: Message):
     }
 
     try:
-        # Send request to starryAI API
+        # Send POST request to initiate image generation
         response = requests.post(STARRYAI_API_URL, json=payload, headers=headers)
         
         # Check if the request was successful
         if response.status_code == 200:
             data = response.json()
-            # Assuming the API returns a URL or a list of image URLs
-            # Adjust this based on the actual starryAI API response structure
-            image_urls = data.get("image_urls", [])  # Replace with actual key from API response
-            if image_urls:
-                for url in image_urls:
-                    await message.reply_photo(url)
-            else:
-                await message.reply("No images generated. Please try again.")
+            print("POST Response:", data)  # Debug: Print raw API response
+            
+            # Check for creation_id
+            creation_id = data.get("creation_id") or data.get("id")
+            if not creation_id:
+                await message.reply(f"No creation_id returned. API response: {data}")
+                return
+
+            # Notify user that generation is in progress
+            await message.reply("Image generation in progress. Checking status...")
+
+            # Poll for task completion
+            for _ in range(10):  # Try up to 10 times (adjust as needed)
+                status_data = check_task_status(creation_id)
+                print("Status Response:", status_data)  # Debug: Print status response
+                
+                # Check for images or status
+                status = status_data.get("status")
+                image_urls = status_data.get("images", [])  # Adjust based on actual response key
+                
+                if status == "completed" and image_urls:
+                    for url in image_urls:
+                        await message.reply_photo(url)
+                    return
+                elif status == "failed":
+                    await message.reply(f"Image generation failed: {status_data.get('error', 'Unknown error')}")
+                    return
+                elif status == "processing":
+                    await message.reply(f"Still processing (attempt {_+1}/10)...")
+                elif "error" in status_data:
+                    await message.reply(f"Status error: {status_data['error']}")
+                    return
+                
+                time.sleep(10)  # Wait 10 seconds before next status check
+                
+            await message.reply("Image generation timed out. Please try again later.")
         else:
-            await message.reply(f"Error: {response.status_code} - {response.text}")
+            await message.reply(f"API Error: {response.status_code} - {response.text}")
             
     except Exception as e:
         await message.reply(f"An error occurred: {str(e)}")
