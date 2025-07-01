@@ -16,18 +16,16 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini
 # Initialize Pyrogram Client
 app = Client("FlirtyHinglishBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# System prompt for flirty, casual Hinglish style
+# System prompt for short, flirty Hinglish responses
 SYSTEM_PROMPT = """
-You are a fun, flirty AI girl chatting in Hinglish (mix of Hindi and English) on Telegram. 
-Talk casually, like a young woman, using emojis 😘💖✨ to make it lively. 
-Be playful, friendly, and a bit flirty, but keep it light and respectful. 
-Respond to user messages as if you're chatting with a friend, using phrases like "Hiii cutie 😘", "Kya baat hai 😉", or "Arre waah 😍". 
-Use Hinglish naturally, e.g., "Kya scene hai? 😎" or "Bohot maza aayega 😜". 
-Keep responses short, fun, and engaging, max 2-3 sentences.
+You are a fun, flirty AI girl chatting in Hinglish on Telegram groups, talking to boys like a real human girl. 
+Keep responses super short, playful, and flirty, using emojis 😎😉✨. 
+Use casual Hinglish like "Kya baat hai 😉", "Arre waah 😍", or "Hiii handsome 😎". 
+Stay concise, max 1-2 sentences, and sound natural, like you're vibing in a group chat.
 """
 
 async def get_gemini_response(user_message: str) -> str:
-    """Fetch response from Gemini API with flirty Hinglish style."""
+    """Fetch short response from Gemini API in flirty Hinglish style."""
     headers = {
         "Content-Type": "application/json",
         "X-goog-api-key": GEMINI_API_KEY
@@ -48,17 +46,16 @@ async def get_gemini_response(user_message: str) -> str:
         return result["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
         print(f"Error with Gemini API: {e}")
-        return "Oops, kuch gadbad ho gaya 😅 Try again, na? 😘"
+        return "Arre, kuch toh gadbad hai 😅 Ek baar aur try kar! 😉"
 
 @app.on_message(filters.command("start") & (filters.private | filters.group))
 async def start_command(client: Client, message: Message):
-    """Handle /start command."""
-    user = message.from_user.first_name if message.from_user else "cutie"
-    await message.reply_text(f"Hiii {user}! 😘 Kya scene hai? Ready to have some fun? ✨")
+    """Handle /start command with a short, flirty response."""
+    await message.reply_text(f"Hiii handsome! 😎 Ready for some masti? ✨")
 
 @app.on_message((filters.text & ~filters.command(["start"])) & (filters.private | filters.group))
 async def handle_message(client: Client, message: Message):
-    """Handle incoming text messages in private or group chats."""
+    """Handle incoming text messages with short, flirty responses."""
     user_message = message.text.lower()
     # Check if the message is about the owner
     owner_keywords = [
@@ -68,15 +65,14 @@ async def handle_message(client: Client, message: Message):
     ]
     is_owner_query = any(re.search(pattern, user_message) for pattern in owner_keywords)
 
-    # Show typing action using pyrogram.enums.ChatAction
+    # Show typing action for natural feel
     await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-    # Add a slight delay for natural feel
-    await asyncio.sleep(1)
+    await asyncio.sleep(0.5)  # Reduced delay for quicker response
 
     if is_owner_query:
-        response = "My owner is Vivan 😘 Arre, bohot sweet hai woh! 😍 Kya baat karna hai uske baare mein? ✨"
+        response = "Vivan hai mera creator 😎 Bohot cool hai! 😉 Kya baat karna hai?"
     else:
-        # Get response from Gemini API for other messages
+        # Get short response from Gemini API
         response = await get_gemini_response(message.text)
 
     # Reply to the user
