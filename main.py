@@ -1,71 +1,74 @@
+import os
+import re
 import requests
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message
+from pyrogram.enums import ChatAction
+import asyncio
+from AnonXMusic import app 
 
-# Telegram Bot Configuration
-API_ID = 12380656
-API_HASH = "d927c13beaaf5110f25c505b7c071273"
-BOT_TOKEN = "7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI"
+GEMINI_API_KEY = "AIzaSyCMuV6nHtPQB-NExrfShffl38wiSZ2G-Tw"  # Provided Gemini API key
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
-# Freepik API Configuration
-FREEMIK_API_URL = "https://api.freepik.com/v1/ai/mystic"
-FREEMIK_API_KEY = "FPSXa77daa5a26a707a0378902effbd1b594"  # Your provided API key
-HEADERS = {
-    "x-freepik-api-key": FREEMIK_API_KEY,
-    "Content-Type": "application/json"
-}
 
-# Initialize Pyrogram Client
-app = Client("FreepikAIBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# System prompt for short, flirty Hinglish responses
+SYSTEM_PROMPT = """
+You are a fun, flirty AI girl chatting in Hinglish on Telegram groups, talking to boys like a real human girl. 
+Keep responses super short, playful, and flirty, using emojis 😎😉✨. 
+Use casual Hinglish like "Kya baat hai 😉", "Arre waah 😍", or "Hiii handsome 😎". 
+Stay concise, max 1-2 sentences, and sound natural, like you're vibing in a group chat.
+"""
 
-# Command handler for /start
-@app.on_message(filters.command("start"))
-async def start_command(client: Client, message: Message):
-    await message.reply_text(
-        "Welcome to the Freepik AI Bot! Send me a text prompt, and I'll generate an image for you using Freepik's AI. For example: 'A mystical forest at night'."
-    )
-
-# Handler for text messages (prompts)
-@app.on_message(filters.text & ~filters.command(["start"]))
-async def generate_image(client: Client, message: Message):
-    prompt = message.text
-    await message.reply_text("Generating image, please wait...")
-
-    # Freepik API payload
-    payload = {
-        "prompt": prompt,  # User's input as the prompt
-        "structure_strength": 50,
-        "adherence": 50,
-        "hdr": 50,
-        "resolution": "4k",
-        "aspect_ratio": "square_1_1",
-        "model": "realism",
-        "creative_detailing": 33,
-        "engine": "automatic",
-        "fixed_generation": False,
-        "filter_nsfw": False
+async def get_gemini_response(user_message: str) -> str:
+    """Fetch short response from Gemini API in flirty Hinglish style."""
+    headers = {
+        "Content-Type": "application/json",
+        "X-goog-api-key": GEMINI_API_KEY
     }
-
+    data = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": f"{SYSTEM_PROMPT}\nUser: {user_message}\nAssistant:"}
+                ]
+            }
+        ]
+    }
     try:
-        # Make request to Freepik API
-        response = requests.post(FREEMIK_API_URL, json=payload, headers=HEADERS)
-        response.raise_for_status()  # Raise an error for bad responses
-        data = response.json()
-
-        # Assuming the API returns an image URL in the response
-        if "image_url" in data:
-            image_url = data["image_url"]
-            await message.reply_photo(image_url, caption=f"Generated image for: '{prompt}'")
-        else:
-            await message.reply_text("Sorry, no image URL was returned by the API.")
-            
-    except requests.exceptions.RequestException as e:
-        await message.reply_text(f"Error generating image: {str(e)}")
-    except ValueError:
-        await message.reply_text("Error: Invalid response from Freepik API.")
+        response = requests.post(GEMINI_API_URL, json=data, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        return result["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        await message.reply_text(f"An unexpected error occurred: {str(e)}")
+        print(f"Error with Gemini API: {e}")
+        return "Arre, kuch toh gadbad hai 😅 Ek baar aur try kar! 😉"
 
-# Start the bot
-print("Bot is running...")
-app.run()
+@app.on_message(filters.command("start") & (filters.private | filters.group))
+async def start_command(client: Client, message: Message):
+    """Handle /start command with a short, flirty response."""
+    await message.reply_text(f"Hiii handsome! 😎 Ready for some masti? ✨")
+
+@app.on_message((filters.text & ~filters.command(["start"])) & (filters.private | filters.group))
+async def handle_message(client: Client, message: Message):
+    """Handle incoming text messages with short, flirty responses."""
+    user_message = message.text.lower()
+    # Check if the message is about the owner
+    owner_keywords = [
+        r"owner kaun hai", r"kon hai owner", r"who is your owner", 
+        r"owner kiska hai", r"tera owner", r"who made you", 
+        r"kisne banaya", r"creator kaun hai"
+    ]
+    is_owner_query = any(re.search(pattern, user_message) for pattern in owner_keywords)
+
+    # Show typing action for natural feel
+    await client.send_chat_action(message.chat.id, ChatAction.TYPING)
+    await asyncio.sleep(0.5)  # Reduced delay for quicker response
+
+    if is_owner_query:
+        response = "Vivan hai mera creator 😎 Bohot cool hai! 😉 Kya baat karna hai?"
+    else:
+        # Get short response from Gemini API
+        response = await get_gemini_response(message.text)
+
+    # Reply to the user
+    await message.reply_text(response)
