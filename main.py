@@ -1,8 +1,12 @@
 from pyrogram import Client, filters
 import requests
 import os
+import logging
 
-# Telegram Bot API token (get this from BotFather)
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 API_ID = 12380656
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
 BOT_TOKEN = "7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI"
@@ -14,7 +18,7 @@ app = Client("image_gen_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TO
 # Command handler for /start
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Welcome to the Image Generation Bot! Use /generate <prompt> to create an image.")
+    await message.reply_text("Welcome to the Image Generation Bot! Use /generate <description> to create an image.")
 
 # Command handler for /generate
 @app.on_message(filters.command("generate"))
@@ -41,7 +45,12 @@ async def generate_image(client, message):
                 "prompt": prompt,
                 "output_format": "webp",
             },
+            timeout=30  # Add timeout to avoid hanging
         )
+
+        # Log the full response for debugging
+        logger.info(f"API Response Status: {response.status_code}")
+        logger.info(f"API Response Content: {response.text}")
 
         # Check if the request was successful
         if response.status_code == 200:
@@ -56,12 +65,24 @@ async def generate_image(client, message):
             # Clean up the temporary file
             os.remove(image_path)
         else:
-            error_message = response.json().get("message", "Unknown error")
-            await message.reply_text(f"Error generating image: {error_message}")
+            # Try to parse JSON error response
+            try:
+                error_data = response.json()
+                error_message = error_data.get("message", "Unknown error")
+                error_code = error_data.get("code", response.status_code)
+                await message.reply_text(f"Error generating image: {error_message} (Code: {error_code})")
+            except ValueError:
+                # If response is not JSON, provide raw status and text
+                await message.reply_text(f"Error generating image: HTTP {response.status_code} - {response.text}")
 
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request failed: {str(e)}")
+        await message.reply_text(f"Failed to connect to the image generation service: {str(e)}")
     except Exception as e:
-        await message.reply_text(f"An error occurred: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}")
+        await message.reply_text(f"An unexpected error occurred: {str(e)}")
 
 # Run the bot
-print("Bot is running...")
-app.run()
+if __name__ == "__main__":
+    logger.info("Starting the bot...")
+    app.run()
