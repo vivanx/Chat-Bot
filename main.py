@@ -1,119 +1,70 @@
-import requests
-from pyrogram import Client, filters
-from pyrogram.types import Message
-import asyncio
-import os
+import re, requests, asyncio
+from pyrogram import Client, filters, idle
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.enums import ChatAction
 
-# Telegram Bot Configuration
-API_ID = "12380656"
-API_HASH = "d927c13beaaf5110f25c505b7c071273"
-BOT_TOKEN = "7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI"
+app = Client("FriendlyHinglishBot",
+    api_id=12380656,
+    api_hash="d927c13beaaf5110f25c505b7c071273",
+    bot_token="7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI")
 
-# starryAI API Configuration
-STARRYAI_API_URL = "https://api.starryai.com/creations/"
-STARRYAI_API_KEY = "UUAEfTF-AGuNFMpzrj63-QtpQgx8xg"
+# Friendly prompt.
+SYS_PROMPT = "You are a sweet, friendly, and positive chatbot who chats in Hinglish. Keep your replies short, natural, and casual like a best friend talking on Telegram. Use emojis like 😊🙌✨ and Hinglish phrases like 'Kya haal hai yaar?', 'Maza aa gaya!', or 'Tu toh kamaal hai bhai!'. Sound warm, cheerful, and helpful."
 
-# Initialize Pyrogram Client
-app = Client("StarryAIBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+enabled_chats = {}
 
-# Function to check task status using creation_id
-def check_task_status(creation_id):
-    status_url = f"https://api.starryai.com/creations/{creation_id}"
-    headers = {
-        "accept": "application/json",
-        "X-API-Key": STARRYAI_API_KEY
-    }
+async def get_reply(msg):
     try:
-        response = requests.get(status_url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        return {"error": f"Status check failed with code {response.status_code}: {response.text}"}
-    except Exception as e:
-        return {"error": f"Status check error: {str(e)}"}
+        res = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            headers={"Content-Type": "application/json", "X-goog-api-key": ""},
+            json={"contents": [{"parts": [{"text": f"{SYS_PROMPT}\nUser: {msg}\nAssistant:"}]}]}
+        )
+        return res.json()["candidates"][0]["content"]["parts"][0]["text"]
+    except:
+        return "Arre yaar, kuch error aaya 😅 Thoda der baad try kar!"
 
-# Download image as .jpg and return local path
-def download_image_as_jpg(url, index):
-    try:
-        response = requests.get(url, stream=True)
-        if response.status_code == 200:
-            file_path = f"image_{index}.jpg"
-            with open(file_path, "wb") as f:
-                for chunk in response.iter_content(1024):
-                    f.write(chunk)
-            return file_path
-        else:
-            return None
-    except Exception as e:
-        print(f"Download error: {e}")
-        return None
+@app.on_message(filters.command("start") & (filters.private | filters.group))
+async def start(_, m):
+    btns = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Enable Bot", callback_data="enable")],
+        [InlineKeyboardButton("❌ Disable Bot", callback_data="disable")]
+    ])
+    await m.reply_text("Hello doston! 😄 Main hoon aapka Hinglish dost! Start karein masti bhari baatein? ✨", reply_markup=btns)
 
-# Command Handler for /generate
-@app.on_message(filters.command("generate") & filters.group)
-async def generate_image(client: Client, message: Message):
-    if len(message.text.split()) < 2:
-        await message.reply("Please provide a prompt. Example: `/generate a futuristic city`")
+@app.on_callback_query()
+async def button_handler(client, callback_query):
+    chat_id = callback_query.message.chat.id
+    data = callback_query.data
+
+    if data == "enable":
+        enabled_chats[chat_id] = True
+        await callback_query.answer("Bot enabled in this chat ✅", show_alert=True)
+        await callback_query.edit_message_text("Yay! Bot is now ACTIVE 😊")
+    elif data == "disable":
+        enabled_chats[chat_id] = False
+        await callback_query.answer("Bot disabled in this chat ❌", show_alert=True)
+        await callback_query.edit_message_text("Okay! Bot is now OFF 💤")
+
+@app.on_message((filters.text & ~filters.command("start")) & (filters.private | filters.group))
+async def talk(client, m: Message):
+    chat_id = m.chat.id
+    text = m.text.lower()
+
+    if not enabled_chats.get(chat_id, True):
         return
 
-    prompt = " ".join(message.text.split()[1:])
+    await client.send_chat_action(chat_id, ChatAction.TYPING)
+    await asyncio.sleep(0.5)
 
-    payload = {
-        "model": "lyra",
-        "aspectRatio": "square",
-        "highResolution": False,
-        "images": 4,
-        "steps": 20,
-        "initialImageMode": "color",
-        "prompt": prompt
-    }
+    if any(re.search(p, text) for p in [
+        r"owner kaun hai", r"kon hai owner", r"who is your owner",
+        r"owner kiska hai", r"tera owner", r"who made you",
+        r"kisne banaya", r"creator kaun hai"
+    ]):
+        await m.reply_text("Mujhe banaya Vivan ne! 😎 Bahut hi awesome developer hai!")
+    else:
+        reply = await get_reply(text)
+        await m.reply_text(reply)
 
-    headers = {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "X-API-Key": STARRYAI_API_KEY
-    }
-
-    try:
-        response = requests.post(STARRYAI_API_URL, json=payload, headers=headers)
-        
-        if response.status_code == 200:
-            data = response.json()
-            creation_id = data.get("creation_id") or data.get("id")
-            if not creation_id:
-                await message.reply(f"No creation_id returned. API response: {data}")
-                return
-
-            await message.reply("Image generation started. Checking status every 10 seconds...")
-
-            for attempt in range(10):
-                status_data = check_task_status(creation_id)
-                status = status_data.get("status")
-                image_urls = status_data.get("imageUrls") or status_data.get("images", [])
-
-                if status == "completed" and image_urls:
-                    for idx, url in enumerate(image_urls):
-                        jpg_path = download_image_as_jpg(url, idx)
-                        if jpg_path:
-                            await message.reply_photo(photo=jpg_path)
-                            os.remove(jpg_path)  # Clean up after sending
-                        else:
-                            await message.reply(f"Failed to download image from: {url}")
-                    return
-                elif status == "failed":
-                    await message.reply(f"Image generation failed: {status_data.get('error', 'Unknown error')}")
-                    return
-                elif "error" in status_data:
-                    await message.reply(f"Status error: {status_data['error']}")
-                    return
-
-                await asyncio.sleep(10)
-
-            await message.reply("Image generation timed out. Please try again later.")
-        else:
-            await message.reply(f"API Error: {response.status_code} - {response.text}")
-
-    except Exception as e:
-        await message.reply(f"An error occurred: {str(e)}")
-
-# Start the Bot
-print("Bot is running...")
 app.run()
