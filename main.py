@@ -5,13 +5,13 @@ import os
 import re
 
 # Telegram bot credentials
-API_ID = "12380656"  # Get from https://my.telegram.org
-API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
-BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"  # Get from @BotFather
+API_ID = ""  # Get from https://my.telegram.org
+API_HASH = ""  # Get from https://my.telegram.org
+BOT_TOKEN = ""  # Get from @BotFather
 
 # Instagram credentials
-INSTA_USERNAME = "rando.m8875"
-INSTA_PASSWORD = "Deep@123"
+INSTA_USERNAME = ""
+INSTA_PASSWORD = ""
 # Optional: 2FA code (set to None if not needed, or prompt dynamically)
 TWO_FACTOR_CODE = None  # Replace with 2FA code if required
 
