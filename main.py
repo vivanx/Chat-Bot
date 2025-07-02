@@ -8,8 +8,8 @@ API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.or
 BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"  # Get from @BotFather
 
 # Instagram credentials
-INSTA_USERNAME = "YOUR_INSTAGRAM_USERNAME"
-INSTA_PASSWORD = "YOUR_INSTAGRAM_PASSWORD"
+INSTA_USERNAME = "rando.m8875"
+INSTA_PASSWORD = "Deep@123"
 
 # Initialize Pyrogram client
 app = Client("insta_reel_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
