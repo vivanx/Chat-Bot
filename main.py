@@ -2,7 +2,6 @@ import aiohttp
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-# Replace with your real credentials
 API_ID = 12380656
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
 BOT_TOKEN = "7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI"
@@ -18,13 +17,14 @@ async def generate_image(prompt: str) -> bytes:
         "Accept": "image/*"
     }
 
-    # Create multipart/form-data
-    form = aiohttp.FormData()
-    form.add_field("prompt", prompt)
-    form.add_field("output_format", "png")  # or "webp"
+    # We must send multipart/form-data with a dummy file field named 'none'
+    form_data = aiohttp.FormData()
+    form_data.add_field('prompt', prompt)
+    form_data.add_field('output_format', 'png')
+    form_data.add_field('none', '', filename='')  # This is the trick
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, data=form) as resp:
+        async with session.post(url, headers=headers, data=form_data) as resp:
             if resp.status != 200:
                 try:
                     error = await resp.json()
