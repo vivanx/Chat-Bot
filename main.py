@@ -1,70 +1,63 @@
-import re, requests, asyncio
-from pyrogram import Client, filters, idle
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.enums import ChatAction
+import asyncio
+import aiohttp
+from pyrogram import Client, filters
+from pyrogram.types import Message
 
-app = Client("FriendlyHinglishBot",
-    api_id=12380656,
-    api_hash="d927c13beaaf5110f25c505b7c071273",
-    bot_token="7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI")
+# === Replace with your details ===
+API_ID = 12380656  # Your Telegram API ID
+API_HASH = "d927c13beaaf5110f25c505b7c071273"
+BOT_TOKEN = "7497440658:AAEYCwt0J5ItbRKIRLXP1_DxuvrCD9B2yJI"
+GEMINI_API_KEY = "AIzaSyCBO96JCK9wIQ5lMzZbFtLGqOkBCNGqLRI"
 
-# Friendly prompt.
-SYS_PROMPT = "You are a sweet, friendly, and positive chatbot who chats in Hinglish. Keep your replies short, natural, and casual like a best friend talking on Telegram. Use emojis like 😊🙌✨ and Hinglish phrases like 'Kya haal hai yaar?', 'Maza aa gaya!', or 'Tu toh kamaal hai bhai!'. Sound warm, cheerful, and helpful."
+# === Pyrogram client ===
+app = Client("gemini_image_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-enabled_chats = {}
+# === Generate image with Gemini API ===
+async def generate_image(prompt: str) -> bytes:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
-async def get_reply(msg):
-    try:
-        res = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-            headers={"Content-Type": "application/json", "X-goog-api-key": ""},
-            json={"contents": [{"parts": [{"text": f"{SYS_PROMPT}\nUser: {msg}\nAssistant:"}]}]}
-        )
-        return res.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except:
-        return "Arre yaar, kuch error aaya 😅 Thoda der baad try kar!"
+    headers = {
+        "Content-Type": "application/json"
+    }
 
-@app.on_message(filters.command("start") & (filters.private | filters.group))
-async def start(_, m):
-    btns = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Enable Bot", callback_data="enable")],
-        [InlineKeyboardButton("❌ Disable Bot", callback_data="disable")]
-    ])
-    await m.reply_text("Hello doston! 😄 Main hoon aapka Hinglish dost! Start karein masti bhari baatein? ✨", reply_markup=btns)
+    payload = {
+        "contents": [
+            {
+                "parts": [{"text": f"Generate an image for: {prompt}"}]
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "image/png"
+        }
+    }
 
-@app.on_callback_query()
-async def button_handler(client, callback_query):
-    chat_id = callback_query.message.chat.id
-    data = callback_query.data
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status != 200:
+                raise Exception(f"Error from Gemini API: {resp.status}")
+            response_json = await resp.json()
+            try:
+                image_data_base64 = response_json["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
+                import base64
+                return base64.b64decode(image_data_base64)
+            except Exception as e:
+                raise Exception("Failed to parse image from response.")
 
-    if data == "enable":
-        enabled_chats[chat_id] = True
-        await callback_query.answer("Bot enabled in this chat ✅", show_alert=True)
-        await callback_query.edit_message_text("Yay! Bot is now ACTIVE 😊")
-    elif data == "disable":
-        enabled_chats[chat_id] = False
-        await callback_query.answer("Bot disabled in this chat ❌", show_alert=True)
-        await callback_query.edit_message_text("Okay! Bot is now OFF 💤")
-
-@app.on_message((filters.text & ~filters.command("start")) & (filters.private | filters.group))
-async def talk(client, m: Message):
-    chat_id = m.chat.id
-    text = m.text.lower()
-
-    if not enabled_chats.get(chat_id, True):
+# === Telegram command handler ===
+@app.on_message(filters.command("image") & filters.private)
+async def image_handler(client: Client, message: Message):
+    if len(message.command) < 2:
+        await message.reply("Usage: /image your prompt here")
         return
 
-    await client.send_chat_action(chat_id, ChatAction.TYPING)
-    await asyncio.sleep(0.5)
+    prompt = message.text.split(" ", 1)[1]
+    await message.reply("Generating image... please wait...")
 
-    if any(re.search(p, text) for p in [
-        r"owner kaun hai", r"kon hai owner", r"who is your owner",
-        r"owner kiska hai", r"tera owner", r"who made you",
-        r"kisne banaya", r"creator kaun hai"
-    ]):
-        await m.reply_text("Mujhe banaya Vivan ne! 😎 Bahut hi awesome developer hai!")
-    else:
-        reply = await get_reply(text)
-        await m.reply_text(reply)
+    try:
+        image_data = await generate_image(prompt)
+        await message.reply_photo(photo=image_data, caption=f"Generated for: {prompt}")
+    except Exception as e:
+        await message.reply(f"Error: {e}")
 
+# === Start the bot ===
 app.run()
