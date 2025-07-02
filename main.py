@@ -1,6 +1,8 @@
-import re, os
 from pyrogram import Client, filters
 from instagrapi import Client as InstaClient
+import requests
+import os
+import re
 
 # Telegram bot credentials
 API_ID = "12380656"  # Get from https://my.telegram.org
@@ -10,6 +12,8 @@ BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"  # Get from @BotFat
 # Instagram credentials
 INSTA_USERNAME = "rando.m8875"
 INSTA_PASSWORD = "Deep@123"
+# Optional: 2FA code (set to None if not needed, or prompt dynamically)
+TWO_FACTOR_CODE = None  # Replace with 2FA code if required
 
 # Initialize Pyrogram client
 app = Client("insta_reel_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -17,9 +21,13 @@ app = Client("insta_reel_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_T
 # Initialize instagrapi client
 insta = InstaClient()
 
-# Login to Instagram
+# Load or perform Instagram login
 try:
-    insta.login(INSTA_USERNAME, INSTA_PASSWORD)
+    if os.path.exists("session.json"):
+        insta.load_settings("session.json")
+        print("Loaded Instagram session")
+    insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=TWO_FACTOR_CODE)
+    insta.dump_settings("session.json")  # Save session after login
     print("Logged into Instagram successfully")
 except Exception as e:
     print(f"Instagram login failed: {e}")
@@ -39,10 +47,21 @@ async def download_reel(url):
         if media.media_type == 2:  # Video (Reel)
             video_url = media.video_url
             if video_url:
-                # Download the video
+                # Download the video using requests
                 file_path = f"reel_{media_pk}.mp4"
-                insta.download(video_url, file_path)
-                return file_path
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }  # Mimic browser to avoid blocks
+                response = requests.get(video_url, headers=headers, stream=True)
+                if response.status_code == 200:
+                    with open(file_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                    return file_path
+                else:
+                    print(f"Failed to download video: HTTP {response.status_code}")
+                    return None
             else:
                 return None
         else:
@@ -74,6 +93,11 @@ async def handle_reel_url(client, message):
     
     if file_path and os.path.exists(file_path):
         try:
+            # Check file size (Telegram limit: 2 GB = 2,000,000,000 bytes)
+            if os.path.getsize(file_path) > 2_000_000_000:
+                await message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
+                os.remove(file_path)
+                return
             # Send the video to the user
             await message.reply_video(
                 video=file_path,
@@ -86,7 +110,7 @@ async def handle_reel_url(client, message):
             if os.path.exists(file_path):
                 os.remove(file_path)
     else:
-        await message.reply_text("Failed to download the Reel. It might be private or invalid.")
+        await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
 
 # Run the bot
 if __name__ == "__main__":
