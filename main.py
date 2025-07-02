@@ -1,74 +1,94 @@
-import os
-import re
-import requests
-from pyrogram import Client, filters, idle
-from pyrogram.types import Message
-from pyrogram.enums import ChatAction
-import asyncio
-from AnonXMusic import app 
+import re, os
+from pyrogram import Client, filters
+from instagrapi import Client as InstaClient
 
-GEMINI_API_KEY = "AIzaSyCMuV6nHtPQB-NExrfShffl38wiSZ2G-Tw"  # Provided Gemini API key
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+# Telegram bot credentials
+API_ID = "12380656"  # Get from https://my.telegram.org
+API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
+BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"  # Get from @BotFather
 
+# Instagram credentials
+INSTA_USERNAME = "YOUR_INSTAGRAM_USERNAME"
+INSTA_PASSWORD = "YOUR_INSTAGRAM_PASSWORD"
 
-# System prompt for short, flirty Hinglish responses
-SYSTEM_PROMPT = """
-You are a fun, flirty AI girl chatting in Hinglish on Telegram groups, talking to boys like a real human girl. 
-Keep responses super short, playful, and flirty, using emojis 😎😉✨. 
-Use casual Hinglish like "Kya baat hai 😉", "Arre waah 😍", or "Hiii handsome 😎". 
-Stay concise, max 1-2 sentences, and sound natural, like you're vibing in a group chat.
-"""
+# Initialize Pyrogram client
+app = Client("insta_reel_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-async def get_gemini_response(user_message: str) -> str:
-    """Fetch short response from Gemini API in flirty Hinglish style."""
-    headers = {
-        "Content-Type": "application/json",
-        "X-goog-api-key": GEMINI_API_KEY
-    }
-    data = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": f"{SYSTEM_PROMPT}\nUser: {user_message}\nAssistant:"}
-                ]
-            }
-        ]
-    }
+# Initialize instagrapi client
+insta = InstaClient()
+
+# Login to Instagram
+try:
+    insta.login(INSTA_USERNAME, INSTA_PASSWORD)
+    print("Logged into Instagram successfully")
+except Exception as e:
+    print(f"Instagram login failed: {e}")
+    exit(1)
+
+# Function to validate Instagram Reel URL
+def is_valid_reel_url(url):
+    return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+/?", url))
+
+# Function to download Instagram Reel
+async def download_reel(url):
     try:
-        response = requests.post(GEMINI_API_URL, json=data, headers=headers)
-        response.raise_for_status()
-        result = response.json()
-        return result["candidates"][0]["content"]["parts"][0]["text"]
+        # Extract media ID from URL
+        media_pk = insta.media_pk_from_url(url)
+        media = insta.media_info(media_pk)
+        
+        if media.media_type == 2:  # Video (Reel)
+            video_url = media.video_url
+            if video_url:
+                # Download the video
+                file_path = f"reel_{media_pk}.mp4"
+                insta.download(video_url, file_path)
+                return file_path
+            else:
+                return None
+        else:
+            return None
     except Exception as e:
-        print(f"Error with Gemini API: {e}")
-        return "Arre, kuch toh gadbad hai 😅 Ek baar aur try kar! 😉"
+        print(f"Error downloading reel: {e}")
+        return None
 
-@app.on_message(filters.command("start") & (filters.private | filters.group))
-async def start_command(client: Client, message: Message):
-    """Handle /start command with a short, flirty response."""
-    await message.reply_text(f"Hiii handsome! 😎 Ready for some masti? ✨")
+# Handle /start command
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text(
+        "Hi! I'm a bot that downloads Instagram Reels. Send me a valid Instagram Reel URL to download it."
+    )
 
-@app.on_message((filters.text & ~filters.command(["start"])) & (filters.private | filters.group))
-async def handle_message(client: Client, message: Message):
-    """Handle incoming text messages with short, flirty responses."""
-    user_message = message.text.lower()
-    # Check if the message is about the owner
-    owner_keywords = [
-        r"owner kaun hai", r"kon hai owner", r"who is your owner", 
-        r"owner kiska hai", r"tera owner", r"who made you", 
-        r"kisne banaya", r"creator kaun hai"
-    ]
-    is_owner_query = any(re.search(pattern, user_message) for pattern in owner_keywords)
-
-    # Show typing action for natural feel
-    await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-    await asyncio.sleep(0.5)  # Reduced delay for quicker response
-
-    if is_owner_query:
-        response = "Vivan hai mera creator 😎 Bohot cool hai! 😉 Kya baat karna hai?"
+# Handle incoming messages with Instagram Reel URLs
+@app.on_message(filters.text & filters.private)
+async def handle_reel_url(client, message):
+    url = message.text.strip()
+    
+    if not is_valid_reel_url(url):
+        await message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
+        return
+    
+    await message.reply_text("Processing your Reel URL, please wait...")
+    
+    # Download the reel
+    file_path = await download_reel(url)
+    
+    if file_path and os.path.exists(file_path):
+        try:
+            # Send the video to the user
+            await message.reply_video(
+                video=file_path,
+                caption="Here is your Instagram Reel!"
+            )
+            # Clean up the downloaded file
+            os.remove(file_path)
+        except Exception as e:
+            await message.reply_text(f"Error sending video: {e}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
     else:
-        # Get short response from Gemini API
-        response = await get_gemini_response(message.text)
+        await message.reply_text("Failed to download the Reel. It might be private or invalid.")
 
-    # Reply to the user
-    await message.reply_text(response)
+# Run the bot
+if __name__ == "__main__":
+    print("Bot is starting...")
+    app.run()
