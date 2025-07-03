@@ -1,4 +1,4 @@
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from instagrapi import Client as InstaClient
 import aiohttp
 import aiofiles
@@ -123,7 +123,7 @@ async def main():
     await initialize_instagram()
     await app.start()
     print("Bot is running...")
-    await app.idle()
+    await idle()
 
 if __name__ == "__main__":
     asyncio.run(main())
