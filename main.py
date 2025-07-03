@@ -42,11 +42,25 @@ async def login_instagram():
 
 # Function to validate Instagram Reel URL
 def is_valid_reel_url(url):
-    return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+/?", url))
+    if not isinstance(url, str):
+        print(f"URL is not a string: {url}")
+        return False
+    # Normalize URL by removing query parameters and trailing slashes
+    url = url.split('?')[0].rstrip('/')
+    # Match Instagram Reel URLs (e.g., https://www.instagram.com/reel/XXXXX)
+    pattern = r"https?://(www\.)?instagram\.com/reel/[\w-]+/?$"
+    valid = bool(re.match(pattern, url))
+    if not valid:
+        print(f"Invalid Reel URL: {url}")
+    return valid
 
 # Function to download Instagram Reel
 async def download_reel(url):
     try:
+        # Ensure URL is a string and normalize it
+        url = str(url).split('?')[0].rstrip('/')
+        print(f"Processing URL: {url}")
+
         # Extract media ID from URL
         media_pk = insta.media_pk_from_url(url)
         media = insta.media_info(media_pk)
