@@ -170,5 +170,5 @@ async def main():
     await asyncio.Event().wait()  # Keep the bot running
 
 if __name__ == "__main__":
-    print("Starting bot with instagrapi version:", instagrapi.__version__)
+    print("Starting bot...*)
     asyncio.run(main())
