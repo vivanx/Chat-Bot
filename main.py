@@ -1,6 +1,6 @@
 from pyrogram import Client, filters, enums
 from instagrapi import Client as InstaClient
-import requests
+import aiohttp
 import os
 import re
 from datetime import timedelta
@@ -18,43 +18,51 @@ INSTA_PASSWORD = "Deep@123"
 app = Client("insta_reel_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 insta = InstaClient()
 
-# Instagram login with session reuse
-if os.path.exists("session.json"):
-    insta.load_settings("session.json")
-else:
+# Instagram login with session reuse and feedback
+try:
+    if os.path.exists("session.json"):
+        insta.load_settings("session.json")
+        print("Loaded Instagram session from session.json")
     insta.login(INSTA_USERNAME, INSTA_PASSWORD)
     insta.dump_settings("session.json")
+    print("Successfully logged into Instagram")
+except Exception as e:
+    print(f"Instagram login failed: {e}")
+    exit(1)
 
 # Validate Instagram Reel URL
 def is_valid_reel_url(url):
     return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+/?", url))
 
-# Download Instagram Reel in high quality
+# Download Instagram Reel in high quality using aiohttp
 async def download_reel(url):
     try:
         media_pk = insta.media_pk_from_url(url)
         media = insta.media_info(media_pk)
-        if media.media_type != 2 or not media.video_url:  # Ensure it's a video
+        if media.media_type != 2 or not media.video_url:
             return None, None, None, None
         
         # Extract metadata
         title = media.caption_text[:100] if media.caption_text else "No title"
-        if len(media.caption_text) > 100:
+        if len(media.caption_text or "") > 100:
             title += "..."  # Truncate long captions
-        duration = str(timedelta(seconds=int(media.duration))) if media.duration else "Unknown"
-        quality = f"{media.video_width}x{media.video_height}" if media.video_width and media.video_height else "High"
+        duration = str(timedelta(seconds=int(media.duration))) if getattr(media, 'duration', None) else "Unknown"
+        quality = f"{media.video_width}x{media.video_height}" if getattr(media, 'video_width', None) and getattr(media, 'video_height', None) else "High"
 
         # Download highest quality video
         file_path = f"reel_{media_pk}.mp4"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        with requests.get(media.video_url, headers=headers, stream=True, timeout=10) as response:
-            if response.status_code != 200:
-                return None, None, None, None
-            with open(file_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=16384):  # Larger chunks for speed
-                    f.write(chunk)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(media.video_url, headers=headers, timeout=15) as response:
+                if response.status != 200:
+                    print(f"Download failed: HTTP {response.status}")
+                    return None, None, None, None
+                with open(file_path, 'wb') as f:
+                    async for chunk in response.content.iter_chunked(16384):
+                        f.write(chunk)
         return file_path, title, duration, quality
-    except Exception:
+    except Exception as e:
+        print(f"Error downloading Reel: {e}")
         return None, None, None, None
 
 # Handle /start command
@@ -79,16 +87,26 @@ async def handle_reel_url(_, message):
                 await message.reply("Reel too large (>2GB) for Telegram!")
                 os.remove(file_path)
                 return
-            # Send video with metadata in caption
+            # Ensure caption is within Telegram's 1024-character limit
             caption = f"🎥 *Reel*\n📜 *Title*: {title}\n⏱ *Duration*: {duration}\n📺 *Quality*: {quality}"
-            await message.reply_video(file_path, caption=caption, parse_mode=enums.ParseMode.MARKDOWN)
+            if len(caption) > 1024:
+                caption = caption[:1020] + "..."
+            await message.reply_video(
+                video=file_path,
+                caption=caption,
+                parse_mode=enums.ParseMode.MARKDOWN
+            )
+            print(f"Sent Reel to user: {message.from_user.id}")
             os.remove(file_path)
-        except Exception:
-            await message.reply("Error sending Reel!")
+        except Exception as e:
+            print(f"Error sending Reel: {e}")
+            await message.reply("Error sending Reel! It might be too large or corrupted.")
             if os.path.exists(file_path):
                 os.remove(file_path)
     else:
-        await message.reply("Failed to download Reel. It might be private or unavailable.")
+        await message.reply("Failed to download Reel. It might be private, deleted, or blocked.")
 
 # Start the bot
-app.run()
+if __name__ == "__main__":
+    print("Starting Telegram bot...")
+    app.run()
