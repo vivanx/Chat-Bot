@@ -9,7 +9,7 @@ from instagrapi.exceptions import LoginRequired, TwoFactorRequired
 # Telegram bot credentials
 API_ID = "12380656"  # Get from https://my.telegram.org
 API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
-BOT_TOKEN = "7497440658:AAEJ5DRCgrifJtY3LMXa9Ndf6i4otc6Wst0"  # Get from @BotFather
+BOT_TOKEN = "7834584002:AAEJF4grVniXFxPO8kM-Gpk3jhX8SFyj3hc"  # Get from @BotFather
 
 # Instagram credentials
 INSTA_USERNAME = "rando.m8875"
