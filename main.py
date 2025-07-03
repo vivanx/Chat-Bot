@@ -1,6 +1,6 @@
 from pyrogram import Client, filters
 from instagrapi import Client as InstaClient
-import requests
+import aiohttp
 import os
 import re
 
@@ -37,7 +37,7 @@ except Exception as e:
 def is_valid_reel_url(url):
     return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+/?", url))
 
-# Function to download Instagram Reel
+# Function to download Instagram Reel using aiohttp
 async def download_reel(url):
     try:
         # Extract media ID from URL
@@ -47,21 +47,22 @@ async def download_reel(url):
         if media.media_type == 2:  # Video (Reel)
             video_url = media.video_url
             if video_url:
-                # Download the video using requests
+                # Download the video using aiohttp
                 file_path = f"reel_{media_pk}.mp4"
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 }  # Mimic browser to avoid blocks
-                response = requests.get(video_url, headers=headers, stream=True)
-                if response.status_code == 200:
-                    with open(file_path, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-                    return file_path
-                else:
-                    print(f"Failed to download video: HTTP {response.status_code}")
-                    return None
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(video_url, headers=headers) as response:
+                        if response.status == 200:
+                            with open(file_path, 'wb') as f:
+                                async for chunk in response.content.iter_chunked(8192):
+                                    if chunk:
+                                        f.write(chunk)
+                            return file_path
+                        else:
+                            print(f"Failed to download video: HTTP {response.status}")
+                            return None
             else:
                 return None
         else:
