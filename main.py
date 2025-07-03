@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Telegram bot credentials
 API_ID = "12380656"
 API_HASH = "d927c13beaaf5110f25c505b7c071273"
-BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"
+BOT_TOKEN = "7834584002:AAEJF4grVniXFxPO8kM-Gpk3jhX8SFyj3hc"
 
 # Instagram credentials
 INSTA_USERNAME = "rando.m8875"
