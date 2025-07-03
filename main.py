@@ -2,6 +2,7 @@ import aiohttp
 import asyncio
 import os
 import re
+import instagrapi  # Import the module to access __version__
 from instagrapi import Client as InstaClient
 from instagrapi.exceptions import LoginRequired, TwoFactorRequired
 from telegram import Update
@@ -61,13 +62,18 @@ async def download_reel(url):
         url = str(url).split('?')[0].rstrip('/')
         print(f"Processing URL: type={type(url)}, value={url}")
 
+        # Validate URL format before calling media_pk_from_url
+        if not is_valid_reel_url(url):
+            print(f"URL failed validation in download_reel: {url}")
+            return None, None
+
         # Extract media ID from URL
         try:
             media_pk = insta.media_pk_from_url(url)
             print(f"Extracted media_pk: {media_pk}")
         except Exception as e:
             print(f"Error extracting media_pk: {e}")
-            raise
+            return None, None
 
         media = insta.media_info(media_pk)
         print(f"Media info retrieved: media_type={media.media_type}, video_url={media.video_url}")
@@ -164,5 +170,5 @@ async def main():
     await asyncio.Event().wait()  # Keep the bot running
 
 if __name__ == "__main__":
-    print("Starting bot with instagrapi version:", insta.__version__)
+    print("Starting bot with instagrapi version:", instagrapi.__version__)
     asyncio.run(main())
