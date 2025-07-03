@@ -1,112 +1,118 @@
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters
 from instagrapi import Client as InstaClient
-import aiohttp
+import requests
 import os
 import re
-from datetime import timedelta
 
 # Telegram bot credentials
-API_ID = "12380656"
-API_HASH = "d927c13beaaf5110f25c505b7c071273"
-BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"
+API_ID = "12380656"  # Get from https://my.telegram.org
+API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
+BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"  # Get from @BotFather
 
 # Instagram credentials
 INSTA_USERNAME = "rando.m8875"
 INSTA_PASSWORD = "Deep@123"
+# Optional: 2FA code (set to None if not needed, or prompt dynamically)
+TWO_FACTOR_CODE = None  # Replace with 2FA code if required
 
-# Initialize clients
+# Initialize Pyrogram client
 app = Client("insta_reel_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# Initialize instagrapi client
 insta = InstaClient()
 
-# Instagram login with session reuse and feedback
+# Load or perform Instagram login
 try:
     if os.path.exists("session.json"):
         insta.load_settings("session.json")
-        print("Loaded Instagram session from session.json")
-    insta.login(INSTA_USERNAME, INSTA_PASSWORD)
-    insta.dump_settings("session.json")
-    print("Successfully logged into Instagram")
+        print("Loaded Instagram session")
+    insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=TWO_FACTOR_CODE)
+    insta.dump_settings("session.json")  # Save session after login
+    print("Logged into Instagram successfully")
 except Exception as e:
     print(f"Instagram login failed: {e}")
     exit(1)
 
-# Validate Instagram Reel URL
+# Function to validate Instagram Reel URL
 def is_valid_reel_url(url):
     return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+/?", url))
 
-# Download Instagram Reel in high quality using aiohttp
+# Function to download Instagram Reel
 async def download_reel(url):
     try:
+        # Extract media ID from URL
         media_pk = insta.media_pk_from_url(url)
         media = insta.media_info(media_pk)
-        if media.media_type != 2 or not media.video_url:
-            return None, None, None, None
         
-        # Extract metadata
-        title = media.caption_text[:100] if media.caption_text else "No title"
-        if len(media.caption_text or "") > 100:
-            title += "..."  # Truncate long captions
-        duration = str(timedelta(seconds=int(media.duration))) if getattr(media, 'duration', None) else "Unknown"
-        quality = f"{media.video_width}x{media.video_height}" if getattr(media, 'video_width', None) and getattr(media, 'video_height', None) else "High"
-
-        # Download highest quality video
-        file_path = f"reel_{media_pk}.mp4"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(media.video_url, headers=headers, timeout=15) as response:
-                if response.status != 200:
-                    print(f"Download failed: HTTP {response.status}")
-                    return None, None, None, None
-                with open(file_path, 'wb') as f:
-                    async for chunk in response.content.iter_chunked(16384):
-                        f.write(chunk)
-        return file_path, title, duration, quality
+        if media.media_type == 2:  # Video (Reel)
+            video_url = media.video_url
+            if video_url:
+                # Download the video using requests
+                file_path = f"reel_{media_pk}.mp4"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }  # Mimic browser to avoid blocks
+                response = requests.get(video_url, headers=headers, stream=True)
+                if response.status_code == 200:
+                    with open(file_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                    return file_path
+                else:
+                    print(f"Failed to download video: HTTP {response.status_code}")
+                    return None
+            else:
+                return None
+        else:
+            return None
     except Exception as e:
-        print(f"Error downloading Reel: {e}")
-        return None, None, None, None
+        print(f"Error downloading reel: {e}")
+        return None
 
 # Handle /start command
-@app.on_message(filters.command("start") & filters.private)
-async def start(_, message):
-    await message.reply("Send an Instagram Reel URL to download it!")
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text(
+        "Hi! I'm a bot that downloads Instagram Reels. Send me a valid Instagram Reel URL to download it."
+    )
 
-# Handle Reel URLs
+# Handle incoming messages with Instagram Reel URLs
 @app.on_message(filters.text & filters.private)
-async def handle_reel_url(_, message):
+async def handle_reel_url(client, message):
     url = message.text.strip()
+    
     if not is_valid_reel_url(url):
-        await message.reply("Invalid Reel URL! Send a valid one (e.g., https://www.instagram.com/reel/XXXXX/).")
+        await message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
         return
     
-    await message.reply("Downloading Reel...")
-    file_path, title, duration, quality = await download_reel(url)
+    await message.reply_text("Processing your Reel URL, please wait...")
+    
+    # Download the reel
+    file_path = await download_reel(url)
     
     if file_path and os.path.exists(file_path):
         try:
+            # Check file size (Telegram limit: 2 GB = 2,000,000,000 bytes)
             if os.path.getsize(file_path) > 2_000_000_000:
-                await message.reply("Reel too large (>2GB) for Telegram!")
+                await message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
                 os.remove(file_path)
                 return
-            # Ensure caption is within Telegram's 1024-character limit
-            caption = f"🎥 *Reel*\n📜 *Title*: {title}\n⏱ *Duration*: {duration}\n📺 *Quality*: {quality}"
-            if len(caption) > 1024:
-                caption = caption[:1020] + "..."
+            # Send the video to the user
             await message.reply_video(
                 video=file_path,
-                caption=caption,
-                parse_mode=enums.ParseMode.MARKDOWN
+                caption="Here is your Instagram Reel!"
             )
-            print(f"Sent Reel to user: {message.from_user.id}")
+            # Clean up the downloaded file
             os.remove(file_path)
         except Exception as e:
-            print(f"Error sending Reel: {e}")
-            await message.reply("Error sending Reel! It might be too large or corrupted.")
+            await message.reply_text(f"Error sending video: {e}")
             if os.path.exists(file_path):
                 os.remove(file_path)
     else:
-        await message.reply("Failed to download Reel. It might be private, deleted, or blocked.")
+        await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
 
-# Start the bot
+# Run the bot
 if __name__ == "__main__":
-    print("Starting Telegram bot...")
+    print("Bot is starting...")
     app.run()
