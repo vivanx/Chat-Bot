@@ -43,7 +43,7 @@ async def login_instagram():
 # Function to validate Instagram Reel URL
 def is_valid_reel_url(url):
     if not isinstance(url, str):
-        print(f"URL is not a string: {url}")
+        print(f"URL is not a string: type={type(url)}, value={url}")
         return False
     # Normalize URL by removing query parameters and trailing slashes
     url = url.split('?')[0].rstrip('/')
@@ -59,17 +59,25 @@ async def download_reel(url):
     try:
         # Ensure URL is a string and normalize it
         url = str(url).split('?')[0].rstrip('/')
-        print(f"Processing URL: {url}")
+        print(f"Processing URL: type={type(url)}, value={url}")
 
         # Extract media ID from URL
-        media_pk = insta.media_pk_from_url(url)
+        try:
+            media_pk = insta.media_pk_from_url(url)
+            print(f"Extracted media_pk: {media_pk}")
+        except Exception as e:
+            print(f"Error extracting media_pk: {e}")
+            raise
+
         media = insta.media_info(media_pk)
+        print(f"Media info retrieved: media_type={media.media_type}, video_url={media.video_url}")
 
         if media.media_type == 2 and media.video_url:  # Ensure it's a Reel
             video_url = media.video_url
             caption = media.caption_text or "No caption available"
+            print(f"Video URL: {video_url}, Caption: {caption}")
 
-            # Download the video using aiohttp for speed
+            # Download the video using aiohttp
             file_path = f"reel_{media_pk}.mp4"
             async with aiohttp.ClientSession() as session:
                 async with session.get(video_url, headers={
@@ -79,6 +87,7 @@ async def download_reel(url):
                         with open(file_path, 'wb') as f:
                             async for chunk in response.content.iter_chunked(8192):
                                 f.write(chunk)
+                        print(f"Video downloaded to: {file_path}")
                         return file_path, caption
                     else:
                         print(f"Failed to download video: HTTP {response.status}")
@@ -99,6 +108,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Handle incoming messages with Instagram Reel URLs
 async def handle_reel_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
+    print(f"Received URL from user: {url}")
 
     if not is_valid_reel_url(url):
         await update.message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
@@ -125,6 +135,7 @@ async def handle_reel_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption=caption[:1024],  # Telegram caption limit is 1024 characters
                     supports_streaming=True  # Enable streaming for faster playback
                 )
+            print(f"Video sent successfully: {file_path}")
             # Clean up the downloaded file
             os.remove(file_path)
         except Exception as e:
@@ -153,4 +164,5 @@ async def main():
     await asyncio.Event().wait()  # Keep the bot running
 
 if __name__ == "__main__":
+    print("Starting bot with instagrapi version:", insta.__version__)
     asyncio.run(main())
