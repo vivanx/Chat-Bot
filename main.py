@@ -1,4 +1,4 @@
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 import re
 import aiohttp
 import asyncio
@@ -71,7 +71,7 @@ async def download_reel(client, message):
 async def main():
     await app.start()
     print("Bot is running...")
-    await app.idle()
+    await idle()
 
 if __name__ == "__main__":
     asyncio.run(main())
