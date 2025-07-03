@@ -1,23 +1,19 @@
 import aiohttp
 import asyncio
-from pyrogram import Client, filters, idle
-from instagrapi import Client as InstaClient
 import os
 import re
+from instagrapi import Client as InstaClient
 from instagrapi.exceptions import LoginRequired, TwoFactorRequired
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # Telegram bot credentials
-API_ID = "12380656"  # Get from https://my.telegram.org
-API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
 BOT_TOKEN = "7834584002:AAEJF4grVniXFxPO8kM-Gpk3jhX8SFyj3hc"  # Get from @BotFather
 
 # Instagram credentials
 INSTA_USERNAME = "rando.m8875"
 INSTA_PASSWORD = "Deep@123"
 TWO_FACTOR_CODE = None  # Replace with 2FA code if required, or prompt dynamically
-
-# Initialize Pyrogram client
-app = Client("insta_reel_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # Initialize instagrapi client
 insta = InstaClient()
@@ -81,22 +77,20 @@ async def download_reel(url):
         return None, None
 
 # Handle /start command
-@app.on_message(filters.command("start"))
-async def start(client, message):
-    await message.reply_text(
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "Hi! I'm a bot that downloads Instagram Reels with captions. Send me a valid Instagram Reel URL."
     )
 
 # Handle incoming messages with Instagram Reel URLs
-@app.on_message(filters.text & filters.private)
-async def handle_reel_url(client, message):
-    url = message.text.strip()
+async def handle_reel_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text.strip()
 
     if not is_valid_reel_url(url):
-        await message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
+        await update.message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
         return
 
-    await message.reply_text("Processing your Reel URL...")
+    await update.message.reply_text("Processing your Reel URL...")
 
     # Download the reel
     file_path, caption = await download_reel(url)
@@ -106,31 +100,43 @@ async def handle_reel_url(client, message):
             # Check file size (Telegram limit: 2 GB = 2,000,000,000 bytes)
             file_size = os.path.getsize(file_path)
             if file_size > 2_000_000_000:
-                await message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
+                await update.message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
                 os.remove(file_path)
                 return
 
             # Send the video to the user with the caption
-            await message.reply_video(
-                video=file_path,
-                caption=caption[:1024],  # Telegram caption limit is 1024 characters
-                supports_streaming=True  # Enable streaming for faster playback
-            )
+            with open(file_path, 'rb') as video_file:
+                await update.message.reply_video(
+                    video=video_file,
+                    caption=caption[:1024],  # Telegram caption limit is 1024 characters
+                    supports_streaming=True  # Enable streaming for faster playback
+                )
             # Clean up the downloaded file
             os.remove(file_path)
         except Exception as e:
-            await message.reply_text(f"Error sending video: {e}")
+            await update.message.reply_text(f"Error sending video: {e}")
             if os.path.exists(file_path):
                 os.remove(file_path)
     else:
-        await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
+        await update.message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
 
 # Run the bot
 async def main():
-    await login_instagram()  # Perform Instagram login
+    # Perform Instagram login
+    await login_instagram()
+
+    # Initialize the Telegram bot
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    # Add handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reel_url))
+
     print("Bot is starting...")
+    await app.initialize()
     await app.start()
-    await idle()
+    await app.updater.start_polling()
+    await asyncio.Event().wait()  # Keep the bot running
 
 if __name__ == "__main__":
     asyncio.run(main())
