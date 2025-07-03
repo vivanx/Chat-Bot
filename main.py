@@ -1,129 +1,77 @@
-from pyrogram import Client, filters, idle
-from instagrapi import Client as InstaClient
-import aiohttp
-import aiofiles
-import os
+from pyrogram import Client, filters
 import re
+import aiohttp
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
+import time
 
-# Telegram bot credentials
-API_ID = "12380656"
-API_HASH = "d927c13beaaf5110f25c505b7c071273"
-BOT_TOKEN = "7834584002:AAEJF4grVniXFxPO8kM-Gpk3jhX8SFyj3hc"
+# Telegram Bot Configuration
+app = Client(
+    "InstaReelDownloader",
+    api_id=12380656,  # Replace with your API ID
+    api_hash="d927c13beaaf5110f25c505b7c071273",  # Replace with your API Hash
+    bot_token="7834584002:AAEJF4grVniXFxPO8kM-Gpk3jhX8SFyj3hc"  # Replace with your Bot Token
+)
 
-# Instagram credentials
-INSTA_USERNAME = "rando.m8875"
-INSTA_PASSWORD = "Deep@123"
-TWO_FACTOR_CODE = None
+# Regex to extract video URL from Instagram page
+VIDEO_URL_PATTERN = r'"video_url":"(https:\/\/[^"]+\.mp4[^"]*)"'
 
-# Initialize Pyrogram client
-app = Client("insta_reel_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+async def fetch_url(url: str) -> str:
+    """Fetch the HTML content of the given URL."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as response:
+            return await response.text()
 
-# Initialize instagrapi client
-insta = InstaClient()
+async def extract_video_url(html: str) -> str:
+    """Extract the video URL from Instagram page HTML."""
+    match = re.search(VIDEO_URL_PATTERN, html)
+    return match.group(1) if match else None
 
-# Thread pool for blocking operations
-executor = ThreadPoolExecutor(max_workers=2)
+async def is_instagram_reel(url: str) -> bool:
+    """Check if the URL is a valid Instagram Reel URL."""
+    parsed = urlparse(url)
+    return parsed.hostname in ("www.instagram.com", "instagram.com") and "/reel/" in parsed.path
 
-# Load or perform Instagram login
-async def initialize_instagram():
-    loop = asyncio.get_event_loop()
+@app.on_message(filters.command(["start"]))
+async def start_command(client, message):
+    await message.reply_text("Send me an Instagram Reel URL, and I'll download it for you!")
+
+@app.on_message(filters.text & filters.regex(r"https?://(www\.)?instagram\.com/reel/[^ ]+"))
+async def download_reel(client, message):
+    start_time = time.time()
+    reel_url = message.text.strip()
+
     try:
-        if os.path.exists("session.json"):
-            await loop.run_in_executor(executor, lambda: insta.load_settings("session.json"))
-            print("Loaded Instagram session")
-        await loop.run_in_executor(executor, lambda: insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=TWO_FACTOR_CODE))
-        await loop.run_in_executor(executor, lambda: insta.dump_settings("session.json"))
-        print("Logged into Instagram successfully")
-    except Exception as e:
-        print(f"Instagram login failed: {e}")
-        exit(1)
+        # Validate URL
+        if not await is_instagram_reel(reel_url):
+            await message.reply_text("Please send a valid Instagram Reel URL.")
+            return
 
-# Function to validate Instagram Reel URL (optimized regex)
-def is_valid_reel_url(url):
-    return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+", url))
-
-# Function to download Instagram Reel (optimized with aiohttp)
-async def download_reel(url):
-    try:
-        # Extract media ID (run in executor to avoid blocking)
-        loop = asyncio.get_event_loop()
-        media_pk = await loop.run_in_executor(executor, lambda: insta.media_pk_from_url(url))
-        media = await loop.run_in_executor(executor, lambda: insta.media_info(media_pk))
+        # Fetch HTML content
+        html = await fetch_url(reel_url)
         
-        if media.media_type == 2:  # Video (Reel)
-            video_url = media.video_url
-            if video_url:
-                file_path = f"reel_{media_pk}.mp4"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(video_url, headers=headers) as response:
-                        if response.status == 200:
-                            async with aiofiles.open(file_path, 'wb') as f:
-                                async for chunk in response.content.iter_chunked(8192):
-                                    await f.write(chunk)
-                            return file_path
-                        else:
-                            print(f"Failed to download video: HTTP {response.status}")
-                            return None
-            return None
-        return None
+        # Extract video URL
+        video_url = await extract_video_url(html)
+        if not video_url:
+            await message.reply_text("Could not extract video URL. The reel might be private or unavailable.")
+            return
+
+        # Send video to user
+        await message.reply_video(
+            video=video_url,
+            caption=f"Downloaded in {((time.time() - start_time) * 1000):.2f} ms"
+        )
+
     except Exception as e:
-        print(f"Error downloading reel: {e}")
-        return None
+        await message.reply_text(f"Error: {str(e)}")
 
-# Handle /start command
-@app.on_message(filters.command("start"))
-async def start(client, message):
-    await message.reply_text(
-        "Hi! I'm a bot that downloads Instagram Reels. Send me a valid Instagram Reel URL."
-    )
-
-# Handle incoming messages with Instagram Reel URLs
-@app.on_message(filters.text & filters.private)
-async def handle_reel_url(client, message):
-    url = message.text.strip()
-    
-    if not is_valid_reel_url(url):
-        await message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
-        return
-    
-    await message.reply_text("Processing your Reel URL, please wait...")
-    
-    # Download the reel
-    file_path = await download_reel(url)
-    
-    if file_path and os.path.exists(file_path):
-        try:
-            # Check file size (Telegram limit: 2 GB)
-            file_size = await asyncio.get_event_loop().run_in_executor(executor, lambda: os.path.getsize(file_path))
-            if file_size > 2_000_000_000:
-                await message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
-                await asyncio.get_event_loop().run_in_executor(executor, lambda: os.remove(file_path))
-                return
-            # Send the video to the user
-            await message.reply_video(
-                video=file_path,
-                caption="Here is your Instagram Reel!"
-            )
-            # Clean up the downloaded file
-            await asyncio.get_event_loop().run_in_executor(executor, lambda: os.remove(file_path))
-        except Exception as e:
-            await message.reply_text(f"Error sending video: {e}")
-            if os.path.exists(file_path):
-                await asyncio.get_event_loop().run_in_executor(executor, lambda: os.remove(file_path))
-    else:
-        await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
-
-# Run the bot
 async def main():
-    await initialize_instagram()
     await app.start()
     print("Bot is running...")
-    await idle()
+    await app.idle()
 
 if __name__ == "__main__":
     asyncio.run(main())
