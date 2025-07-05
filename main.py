@@ -32,9 +32,6 @@ app = Client(
 login_code = None
 login_code_message_id = None  # Track the login code prompt message ID
 insta = None  # Global InstaClient instance
-challenge_pending = False
-challenge_username = None
-challenge_choice = None
 
 # Helper async function to handle Telegram DM for verification code
 async def get_verification_code_via_dm(username, choice):
@@ -69,19 +66,12 @@ async def get_verification_code_via_dm(username, choice):
 
 # Synchronous challenge code handler for instagrapi
 def challenge_code_handler(username, choice):
-    global challenge_pending, challenge_username, challenge_choice
-    challenge_pending = True
-    challenge_username = username
-    challenge_choice = choice
-    return None  # Return None initially; async login will handle the code
+    # Return None to let async login handle the challenge
+    return None
 
 # Handle Instagram login with verification code
 async def login_instagram():
-    global insta, login_code_message_id, challenge_pending, challenge_username, challenge_choice
-    challenge_pending = False
-    challenge_username = None
-    challenge_choice = None
-    
+    global insta, login_code_message_id
     try:
         # Initialize InstaClient
         insta = InstaClient()
@@ -93,16 +83,16 @@ async def login_instagram():
             logger.info("Loaded Instagram session")
             try:
                 insta.login(INSTA_USERNAME, INSTA_PASSWORD)  # Verify session
+                logger.info("Logged into Instagram successfully")
             except ChallengeRequired:
                 logger.info("ChallengeRequired triggered during session verification")
-                if challenge_pending:
-                    code = await get_verification_code_via_dm(challenge_username, challenge_choice)
-                    if code:
-                        insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=code)
-                        insta.dump_settings("session.json")
-                        logger.info("Logged into Instagram successfully after challenge")
-                    else:
-                        raise Exception("Failed to obtain verification code")
+                code = await get_verification_code_via_dm(INSTA_USERNAME, 1)  # Default to email
+                if code:
+                    insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=code)
+                    insta.dump_settings("session.json")
+                    logger.info("Logged into Instagram successfully after challenge")
+                else:
+                    raise Exception("Failed to obtain verification code")
         else:
             try:
                 insta.login(INSTA_USERNAME, INSTA_PASSWORD)
@@ -110,14 +100,13 @@ async def login_instagram():
                 logger.info("Logged into Instagram successfully")
             except ChallengeRequired:
                 logger.info("ChallengeRequired triggered, handling in async flow")
-                if challenge_pending:
-                    code = await get_verification_code_via_dm(challenge_username, challenge_choice)
-                    if code:
-                        insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=code)
-                        insta.dump_settings("session.json")
-                        logger.info("Logged into Instagram successfully after challenge")
-                    else:
-                        raise Exception("Failed to obtain verification code")
+                code = await get_verification_code_via_dm(INSTA_USERNAME, 1)  # Default to email
+                if code:
+                    insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=code)
+                    insta.dump_settings("session.json")
+                    logger.info("Logged into Instagram successfully after challenge")
+                else:
+                    raise Exception("Failed to obtain verification code")
             except Exception as e:
                 logger.error(f"Login error: {e}")
                 await app.send_message(BOT_OWNER_ID, f"Instagram login failed: {e}")
