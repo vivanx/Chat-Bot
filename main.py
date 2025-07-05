@@ -19,8 +19,22 @@ API_HASH = os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8169634009:AAE6IccUkkyzWw9KG6p5v63dN9DwmOZOL2Y")
 INSTA_USERNAME = os.getenv("INSTA_USERNAME", "rando.m8875")
 INSTA_PASSWORD = os.getenv("INSTA_PASSWORD", "Deep@123")
-BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "7899004087"))  # Replace with your Telegram user ID
+BOT_OWNER_ID_STR = os.getenv("BOT_OWNER_ID", "7899004087")
 PORT = int(os.getenv("PORT", 8000))  # Render provides PORT; default to 8000 for local testing
+
+# Validate environment variables
+try:
+    BOT_OWNER_ID = int(BOT_OWNER_ID_STR)
+except ValueError:
+    logger.error("Invalid BOT_OWNER_ID: Must be a numeric Telegram user ID")
+    raise ValueError("BOT_OWNER_ID must be a numeric Telegram user ID")
+
+if not INSTA_USERNAME or INSTA_USERNAME == "rando.m8875":
+    logger.error("INSTA_USERNAME is not set or is using default value")
+    raise ValueError("INSTA_USERNAME must be set to a valid Instagram username")
+if not INSTA_PASSWORD or INSTA_PASSWORD == "Deep@123":
+    logger.error("INSTA_PASSWORD is not set or is using default value")
+    raise ValueError("INSTA_PASSWORD must be set to a valid Instagram password")
 
 # Initialize Pyrogram client
 app = Client(
@@ -94,6 +108,10 @@ async def login_instagram():
         insta = InstaClient()
         insta.delay_range = [1, 3]  # Add delay to avoid rate limits
         insta.challenge_code_handler = challenge_code_handler
+        
+        # Validate credentials before attempting login
+        if not INSTA_USERNAME or not INSTA_PASSWORD:
+            raise ValueError("Instagram username or password is empty")
         
         if os.path.exists("session.json"):
             insta.load_settings("session.json")
