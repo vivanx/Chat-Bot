@@ -1,6 +1,7 @@
-pyrogram
 tgcrypto
-instagrapi
 aiohttp
 pillow
 requests 
+pyrogram==2.0.106
+instagrapi==2.1.2
+python-dotenv==1.0.1
