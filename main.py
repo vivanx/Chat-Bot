@@ -17,7 +17,7 @@ API_HASH = os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8169634009:AAE6IccUkkyzWw9KG6p5v63dN9DwmOZOL2Y")
 INSTA_USERNAME = os.getenv("INSTA_USERNAME", "rando.m8875")
 INSTA_PASSWORD = os.getenv("INSTA_PASSWORD", "Deep@123")
-BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "YOUR_TELEGRAM_USER_ID"))  # Replace with your Telegram user ID
+BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "7899004087"))  # Replace with your Telegram user ID
 
 # Initialize Pyrogram client
 app = Client(
