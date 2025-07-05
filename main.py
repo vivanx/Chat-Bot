@@ -28,16 +28,12 @@ app = Client(
     in_memory=True
 )
 
-# Initialize instagrapi client
-insta = InstaClient()
-insta.delay_range = [1, 3]  # Add delay to avoid rate limits
-
 # Global variables for login code handling
 login_code = None
 login_code_message_id = None  # Track the login code prompt message ID
 
-# Custom challenge code handler to handle verification code via Telegram DM
-async def challenge_code_handler(username, choice):
+# Helper async function to handle Telegram DM for verification code
+async def get_verification_code_via_dm(username, choice):
     global login_code, login_code_message_id
     logger.info(f"Challenge required for {username}, choice: {choice}")
     # Choice: 0 = SMS, 1 = Email, default to Email
@@ -59,17 +55,25 @@ async def challenge_code_handler(username, choice):
             await asyncio.sleep(60)  # Check every 60 seconds
         logger.error("Login code not received in time")
         await app.send_message(BOT_OWNER_ID, "Login code not received in time. Please restart the bot.")
-        exit(1)
+        return None
     except Exception as e:
         logger.error(f"Challenge handler error: {e}")
         await app.send_message(BOT_OWNER_ID, f"Challenge handler error: {e}")
-        exit(1)
+        return None
+
+# Synchronous challenge code handler for instagrapi
+def challenge_code_handler(username, choice):
+    loop = asyncio.get_event_loop()
+    code = loop.run_until_complete(get_verification_code_via_dm(username, choice))
+    return code
 
 # Handle Instagram login with verification code
 async def login_instagram():
     global login_code_message_id
     try:
-        # Set custom challenge code handler
+        # Set synchronous challenge code handler
+        insta = InstaClient()
+        insta.delay_range = [1, 3]  # Add delay to avoid rate limits
         insta.challenge_code_handler = challenge_code_handler
         
         if os.path.exists("session.json"):
@@ -187,6 +191,7 @@ async def handle_reel_url(client, message):
 
 # Main function to start the bot
 async def main():
+    global insta  # Make insta global for use in download_reel
     await app.start()
     await login_instagram()
     logger.info("Bot is running...")
