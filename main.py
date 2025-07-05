@@ -36,22 +36,21 @@ insta.delay_range = [1, 3]  # Add delay to avoid rate limits
 login_code = None
 login_code_message_id = None  # Track the login code prompt message ID
 
-# Custom challenge resolver to handle verification code via Telegram DM
-async def challenge_resolver(username, choice):
+# Custom challenge code handler to handle verification code via Telegram DM
+async def challenge_code_handler(username, choice):
     global login_code, login_code_message_id
     logger.info(f"Challenge required for {username}, choice: {choice}")
     # Choice: 0 = SMS, 1 = Email, default to Email
     if choice not in [0, 1]:
         choice = 1  # Default to Email
     try:
-        insta.challenge_code_handler(username, choice)
         sent_message = await app.send_message(
             BOT_OWNER_ID,
             f"Instagram login requires a verification code. Check your {'email' if choice == 1 else 'phone'} and reply to this message with the 6-digit code (e.g., 123456)."
         )
         login_code_message_id = sent_message.id
         # Wait for login code response (up to 5 minutes)
-        for _ in range(300):
+        for _ in range(5):
             if login_code:
                 code = login_code
                 login_code = None  # Reset for next attempt
@@ -62,29 +61,33 @@ async def challenge_resolver(username, choice):
         await app.send_message(BOT_OWNER_ID, "Login code not received in time. Please restart the bot.")
         exit(1)
     except Exception as e:
-        logger.error(f"Challenge resolver error: {e}")
-        await app.send_message(BOT_OWNER_ID, f"Challenge resolver error: {e}")
+        logger.error(f"Challenge handler error: {e}")
+        await app.send_message(BOT_OWNER_ID, f"Challenge handler error: {e}")
         exit(1)
 
 # Handle Instagram login with verification code
 async def login_instagram():
     global login_code_message_id
     try:
-        # Set custom challenge resolver
-        insta.set_challenge_handler(challenge_resolver)
+        # Set custom challenge code handler
+        insta.challenge_code_handler = challenge_code_handler
         
         if os.path.exists("session.json"):
             insta.load_settings("session.json")
             logger.info("Loaded Instagram session")
-            insta.login(INSTA_USERNAME, INSTA_PASSWORD)  # Verify session
+            try:
+                insta.login(INSTA_USERNAME, INSTA_PASSWORD)  # Verify session
+            except ChallengeRequired:
+                logger.info("ChallengeRequired triggered during session verification")
+                # The challenge_code_handler will handle the code prompt
         else:
             try:
                 insta.login(INSTA_USERNAME, INSTA_PASSWORD)
                 insta.dump_settings("session.json")
                 logger.info("Logged into Instagram successfully")
             except ChallengeRequired:
-                logger.info("ChallengeRequired triggered, handled by challenge_resolver")
-                # The challenge_resolver will handle the code prompt
+                logger.info("ChallengeRequired triggered, handled by challenge_code_handler")
+                # The challenge_code_handler will handle the code prompt
             except Exception as e:
                 logger.error(f"Login error: {e}")
                 await app.send_message(BOT_OWNER_ID, f"Instagram login failed: {e}")
