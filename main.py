@@ -32,6 +32,9 @@ app = Client(
 login_code = None
 login_code_message_id = None  # Track the login code prompt message ID
 insta = None  # Global InstaClient instance
+challenge_pending = False
+challenge_username = None
+challenge_choice = None
 
 # Helper async function to handle Telegram DM for verification code
 async def get_verification_code_via_dm(username, choice):
@@ -66,12 +69,11 @@ async def get_verification_code_via_dm(username, choice):
 
 # Synchronous challenge code handler for instagrapi
 def challenge_code_handler(username, choice):
-    # Since this is called in a sync context, store the challenge details and let the async login handle it
     global challenge_pending, challenge_username, challenge_choice
     challenge_pending = True
     challenge_username = username
     challenge_choice = choice
-    return None  # Return None initially; the async login will handle the code retrieval
+    return None  # Return None initially; async login will handle the code
 
 # Handle Instagram login with verification code
 async def login_instagram():
@@ -163,7 +165,41 @@ async def download_reel(url):
                             if chunk:
                                 f.write(chunk)
                     return file_path
-               stats = message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
+                else:
+                    logger.error(f"Failed to download video: HTTP {response.status_code}")
+                    return None
+            else:
+                return None
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"Error downloading reel: {e}")
+        return None
+
+# Handle /start command
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text(
+        "Hi! I'm a bot that downloads Instagram Reels. Send me a valid Instagram Reel URL to download it."
+    )
+
+# Handle incoming messages with Instagram Reel URLs
+@app.on_message(filters.text & filters.private & ~filters.user(BOT_OWNER_ID))
+async def handle_reel_url(client, message):
+    url = message.text.strip()
+    
+    if not is_valid_reel_url(url):
+        await message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
+        return
+    
+    await message.reply_text("Processing your Reel URL, please wait...")
+    
+    file_path = await download_reel(url)
+    
+    if file_path and os.path.exists(file_path):
+        try:
+            if os.path.getsize(file_path) > 2_000_000_000:
+                await message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
                 os.remove(file_path)
                 return
             await message.reply_video(
@@ -171,10 +207,21 @@ async def download_reel(url):
                 caption="Here is your Instagram Reel!"
             )
             os.remove(file_path)
-        else:
-            await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
+        except Exception as e:
+            logger.error(f"Error sending video: {e}")
+            await message.reply_text(f"Error sending video: {e}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+    else:
+        await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
 
-
+# Main function to start the bot
+async def main():
+    global insta
+    await app.start()
+    await login_instagram()
+    logger.info("Bot is running...")
+    await asyncio.Event().wait()  # Keep bot running
 
 if __name__ == "__main__":
     asyncio.run(main())
