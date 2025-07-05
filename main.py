@@ -1,25 +1,17 @@
-import aiohttp
-import os
-import time
-from io import BytesIO
+import os, re
 from pyrogram import Client, filters
-from pyrogram.types import Message
+from instagrapi import Client as InstaClient
+import requests
 
-# Bot configuration
-API_ID = "12380656"
-API_HASH = "d927c13beaaf5110f25c505b7c071273"
-BOT_TOKEN = "7834584002:AAFGQRrqKE3iFek1FPo-e27x59VUU11Bj6g"
-IMGUR_CLIENT_ID = os.getenv("IMGUR_CLIENT_ID", "YOUR_IMGUR_CLIENT_ID")
-IMGBB_API_KEY = os.getenv("IMGBB_API_KEY", "YOUR_IMGBB_API_KEY")
-DEFAULT_SERVICE = "catbox"  # Fastest default service
-CATBOX_API = "https://catbox.moe/user/api.php"
-SERVICES = {
-    "catbox": {"url": "https://catbox.moe/user/api.php", "params": {"reqtype": "fileupload"}},
-    "litterbox": {"url": "https://litterbox.catbox.moe/resources/internals/api.php", "params": {"reqtype": "fileupload", "time": "1h"}},
-    "imgur": {"url": "https://api.imgur.com/3/image", "headers": {"Authorization": f"Client-ID {IMGUR_CLIENT_ID}"}},
-    "imgbb": {"url": "https://api.imgbb.com/1/upload", "params": {"key": IMGBB_API_KEY}},
-    "uguu": {"url": "https://uguu.se/upload", "params": {}},
-}
+API_ID = "12380656"  # Get from https://my.telegram.org
+API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
+BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"  # Get from @BotFather
+
+# Instagram credentials
+INSTA_USERNAME = "rando.m8875"
+INSTA_PASSWORD = "Deep@123"
+# Optional: 2FA code (set to None if not needed, or prompt dynamically)
+TWO_FACTOR_CODE = None  # Replace with 2FA code if required
 
 # Initialize Pyrogram client with optimized settings
 app = Client(
@@ -30,71 +22,100 @@ app = Client(
     in_memory=True  # Avoid disk-based session storage
 )
 
-async def upload_to_service(file_data: BytesIO, file_name: str, service: str = DEFAULT_SERVICE) -> tuple[str, float]:
-    """Upload a file to the specified service, return URL and upload time."""
-    start_time = time.perf_counter()
-    async with aiohttp.ClientSession() as session:
-        try:
-            file_data.seek(0)  # Reset buffer position
-            service_info = SERVICES[service]
-            data = service_info.get("params", {}).copy()
-            data["fileToUpload" if service in ["catbox", "litterbox", "uguu"] else "image"] = (file_data, file_name)
-            headers = service_info.get("headers", {})
-            async with session.post(service_info["url"], data=data, headers=headers) as response:
-                upload_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
-                if response.status == 200:
-                    result = await response.json() if service in ["imgur", "imgbb"] else await response.text()
-                    if service == "catbox" or service == "litterbox":
-                        url = result.strip() if result.startswith(("https://files.catbox.moe/", "https://litterbox.catbox.moe/")) else f"API error: {result}"
-                    elif service == "imgur":
-                        url = result["data"]["link"]
-                    elif service == "imgbb":
-                        url = result["data"]["url"]
-                    elif service == "uguu":
-                        url = result.strip() if result.startswith("https://a.uguu.se/") else f"API error: {result}"
-                    return url, upload_time
-                return f"Upload failed with status {response.status}", upload_time
-        except Exception as e:
-            return f"Error: {str(e)}", (time.perf_counter() - start_time) * 1000
+# Initialize instagrapi client
+insta = InstaClient()
 
-@app.on_message(filters.command("tgm") & filters.reply)
-async def handle_tgm(client: Client, message: Message):
-    """Handle /tgm command to upload media to Catbox (fastest)."""
-    start_time = time.perf_counter()
-    reply = message.reply_to_message
-    media = reply.photo or reply.video or reply.document
+# Load or perform Instagram login
+try:
+    if os.path.exists("session.json"):
+        insta.load_settings("session.json")
+        print("Loaded Instagram session")
+    insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=TWO_FACTOR_CODE)
+    insta.dump_settings("session.json")  # Save session after login
+    print("Logged into Instagram successfully")
+except Exception as e:
+    print(f"Instagram login failed: {e}")
+    exit(1)
 
-    if not media:
-        await message.reply("Reply to a photo, video, or document.")
-        return
+# Function to validate Instagram Reel URL
+def is_valid_reel_url(url):
+    return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+/?", url))
 
-    # Minimal file validation
-    if media.file_size > 100 * 1024 * 1024:  # 100MB limit
-        await message.reply("File too large (max 100MB).")
-        return
-
-    # Download media to memory
-    file_data = BytesIO()
-    file_name = "media.jpg"  # Default name
-    if reply.photo:
-        file_name = "photo.jpg"
-    elif reply.video:
-        file_name = f"video.{reply.video.mime_type.split('/')[-1]}" if reply.video.mime_type else "video.mp4"
-    elif reply.document:
-        file_name = reply.document.file_name or "document"
-
+# Function to download Instagram Reel
+async def download_reel(url):
     try:
-        await client.download_media(media, file_obj=file_data)
+        # Extract media ID from URL
+        media_pk = insta.media_pk_from_url(url)
+        media = insta.media_info(media_pk)
+        
+        if media.media_type == 2:  # Video (Reel)
+            video_url = media.video_url
+            if video_url:
+                # Download the video using requests
+                file_path = f"reel_{media_pk}.mp4"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }  # Mimic browser to avoid blocks
+                response = requests.get(video_url, headers=headers, stream=True)
+                if response.status_code == 200:
+                    with open(file_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                    return file_path
+                else:
+                    print(f"Failed to download video: HTTP {response.status_code}")
+                    return None
+            else:
+                return None
+        else:
+            return None
     except Exception as e:
-        await message.reply(f"Download failed: {str(e)}")
+        print(f"Error downloading reel: {e}")
+        return None
+
+# Handle /start command
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text(
+        "Hi! I'm a bot that downloads Instagram Reels. Send me a valid Instagram Reel URL to download it."
+    )
+
+# Handle incoming messages with Instagram Reel URLs
+@app.on_message(filters.text & filters.private)
+async def handle_reel_url(client, message):
+    url = message.text.strip()
+    
+    if not is_valid_reel_url(url):
+        await message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
         return
+    
+    await message.reply_text("Processing your Reel URL, please wait...")
+    
+    # Download the reel
+    file_path = await download_reel(url)
+    
+    if file_path and os.path.exists(file_path):
+        try:
+            # Check file size (Telegram limit: 2 GB = 2,000,000,000 bytes)
+            if os.path.getsize(file_path) > 2_000_000_000:
+                await message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
+                os.remove(file_path)
+                return
+            # Send the video to the user
+            await message.reply_video(
+                video=file_path,
+                caption="Here is your Instagram Reel!"
+            )
+            # Clean up the downloaded file
+            os.remove(file_path)
+        except Exception as e:
+            await message.reply_text(f"Error sending video: {e}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+    else:
+        await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
 
-    # Upload to Catbox (or other service via env variable)
-    service = os.getenv("UPLOAD_SERVICE", DEFAULT_SERVICE)
-    url, upload_time = await upload_to_service(file_data, file_name, service)
-    total_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
-
-    await message.reply(f"{url}\nUpload time: {upload_time:.3f}ms\nTotal time: {total_time:.3f}ms")
 
 if __name__ == "__main__":
     app.run()
