@@ -14,16 +14,16 @@ logger = logging.getLogger(__name__)
 # Initialize Pyrogram client
 app = Client(
     "insta_downloader_bot",
-    api_id=os.getenv("API_ID"),
-    api_hash=os.getenv("API_HASH"),
-    bot_token=os.getenv("BOT_TOKEN")
+    api_id=os.getenv("API_ID", "12380656"),
+    api_hash=os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273"),
+    bot_token=os.getenv("BOT_TOKEN", "8169634009:AAE6IccUkkyzWw9KG6p5v63dN9DwmOZOL2Y")
 )
 
 # Initialize Instagram client
 insta = InstaClient()
 SESSION_FILE = "insta_session.json"
 INSTA_CREDENTIALS = {"username": "", "password": ""}
-OWNER_ID = int(os.getenv("OWNER_ID"))  # Telegram user ID of the owner
+OWNER_ID = int(os.getenv("OWNER_ID", "7899004087"))  # Telegram user ID of the owner
 TWO_FACTOR_CHAT = None  # Store chat ID for 2FA requests
 CHALLENGE_CHAT = None  # Store chat ID for challenge code requests
 CHALLENGE_STATE = None  # Store challenge state for verification
