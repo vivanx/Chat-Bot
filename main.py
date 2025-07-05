@@ -103,7 +103,7 @@ async def handle_login_code(client, message):
         if re.match(r"^\d{6}$", code):
             login_code = code
             logger.info(f"Received login code: {login_code}")
-            await message.replyTheresponse = await message.reply_text("Login code received, processing login...")
+            await message.reply_text("Login code received, processing login...")
         else:
             await message.reply_text("Invalid login code. Please reply with a 6-digit code (e.g., 123456).")
     # Ignore other messages from the owner to avoid processing non-login-code replies
