@@ -1,255 +1,204 @@
 import os
-import re
-import asyncio
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from pyrogram import Client, filters
-from instagrapi import Client as InstaClient
-from instagrapi.exceptions import LoginRequired, ChallengeRequired
-import requests
 import logging
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from instagrapi import Client as InstaClient
+from instagrapi.exceptions import LoginRequired, TwoFactorRequired, ChallengeRequired
+import json
+import asyncio
 
-# Set up logging for Render debugging
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load credentials from environment variables (recommended for Render)
-API_ID = os.getenv("API_ID", "12380656")
-API_HASH = os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8169634009:AAE6IccUkkyzWw9KG6p5v63dN9DwmOZOL2Y")
-INSTA_USERNAME = os.getenv("INSTA_USERNAME", "rando.m8875")
-INSTA_PASSWORD = os.getenv("INSTA_PASSWORD", "Deep@123")
-BOT_OWNER_ID_STR = os.getenv("BOT_OWNER_ID", "7899004087")
-PORT = int(os.getenv("PORT", 8000))  # Render provides PORT; default to 8000 for local testing
-
-# Validate environment variables
-try:
-    BOT_OWNER_ID = int(BOT_OWNER_ID_STR)
-except ValueError:
-    logger.error("Invalid BOT_OWNER_ID: Must be a numeric Telegram user ID")
-    raise ValueError("BOT_OWNER_ID must be a numeric Telegram user ID")
-
-if not INSTA_USERNAME or INSTA_USERNAME == "rando.m8875":
-    logger.error("INSTA_USERNAME is not set or is using default value")
-    raise ValueError("INSTA_USERNAME must be set to a valid Instagram username")
-if not INSTA_PASSWORD or INSTA_PASSWORD == "Deep@123":
-    logger.error("INSTA_PASSWORD is not set or is using default value")
-    raise ValueError("INSTA_PASSWORD must be set to a valid Instagram password")
-
 # Initialize Pyrogram client
 app = Client(
-    "fast_upload_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True
+    "insta_downloader_bot",
+    api_id=os.getenv("API_ID"),
+    api_hash=os.getenv("API_HASH"),
+    bot_token=os.getenv("BOT_TOKEN")
 )
 
-# Global variables for login code handling
-login_code = None
-login_code_message_id = None  # Track the login code prompt message ID
-insta = None  # Global InstaClient instance
+# Initialize Instagram client
+insta = InstaClient()
+SESSION_FILE = "insta_session.json"
+INSTA_CREDENTIALS = {"username": "", "password": ""}
+OWNER_ID = int(os.getenv("OWNER_ID"))  # Telegram user ID of the owner
+TWO_FACTOR_CHAT = None  # Store chat ID for 2FA requests
+CHALLENGE_CHAT = None  # Store chat ID for challenge code requests
+CHALLENGE_STATE = None  # Store challenge state for verification
 
-# Dummy HTTP server to satisfy Render's port-binding requirement
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"Telegram bot is running")
+# Load or save Instagram session
+def save_session():
+    with open(SESSION_FILE, "w") as f:
+        json.dump(insta.get_settings(), f)
 
-def run_http_server():
-    server_address = ("", PORT)
-    httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
-    logger.info(f"Starting dummy HTTP server on port {PORT}")
-    httpd.serve_forever()
+def load_session():
+    if os.path.exists(SESSION_FILE):
+        with open(SESSION_FILE, "r") as f:
+            insta.set_settings(json.load(f))
+        return True
+    return False
 
-# Helper async function to handle Telegram DM for verification code
-async def get_verification_code_via_dm(username, choice):
-    global login_code, login_code_message_id
-    logger.info(f"Challenge required for {username}, choice: {choice}")
-    # Choice: 0 = SMS, 1 = Email, default to Email
-    if choice not in [0, 1]:
-        choice = 1  # Default to Email
+# Handle Instagram login
+async def login_instagram(username, password, two_factor_code=None, challenge_code=None):
+    global CHALLENGE_STATE
     try:
-        # Request Instagram to send the verification code
-        insta.challenge_code_handler(username, choice)
-        sent_message = await app.send_message(
-            BOT_OWNER_ID,
-            f"Instagram login requires a verification code. Check your {'email' if choice == 1 else 'phone'} and reply to this message with the 6-digit code (e.g., 123456)."
-        )
-        login_code_message_id = sent_message.id
-        # Wait for login code response (up to 5 minutes)
-        for _ in range(5):
-            if login_code:
-                code = login_code
-                login_code = None  # Reset for next attempt
-                return code
-            await app.send_message(BOT_OWNER_ID, "Still waiting for the 6-digit verification code. Please reply soon.")
-            await asyncio.sleep(60)  # Check every 60 seconds
-        logger.error("Login code not received in time")
-        await app.send_message(BOT_OWNER_ID, "Login code not received in time. Please restart the bot.")
-        return None
-    except Exception as e:
-        logger.error(f"Challenge handler error: {e}")
-        await app.send_message(BOT_OWNER_ID, f"Challenge handler error: {e}")
-        return None
-
-# Synchronous challenge code handler for instagrapi
-def challenge_code_handler(username, choice):
-    # Return None to let async login handle the challenge
-    return None
-
-# Handle Instagram login with verification code
-async def login_instagram():
-    global insta, login_code_message_id
-    try:
-        # Initialize InstaClient
-        insta = InstaClient()
-        insta.delay_range = [1, 3]  # Add delay to avoid rate limits
-        insta.challenge_code_handler = challenge_code_handler
-        
-        # Validate credentials before attempting login
-        if not INSTA_USERNAME or not INSTA_PASSWORD:
-            raise ValueError("Instagram username or password is empty")
-        
-        if os.path.exists("session.json"):
-            insta.load_settings("session.json")
-            logger.info("Loaded Instagram session")
-            try:
-                insta.login(INSTA_USERNAME, INSTA_PASSWORD)  # Verify session
-                logger.info("Logged into Instagram successfully")
-            except ChallengeRequired:
-                logger.info("ChallengeRequired triggered during session verification")
-                code = await get_verification_code_via_dm(INSTA_USERNAME, 1)  # Default to email
-                if code:
-                    insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=code)
-                    insta.dump_settings("session.json")
-                    logger.info("Logged into Instagram successfully after challenge")
-                else:
-                    raise Exception("Failed to obtain verification code")
-        else:
-            try:
-                insta.login(INSTA_USERNAME, INSTA_PASSWORD)
-                insta.dump_settings("session.json")
-                logger.info("Logged into Instagram successfully")
-            except ChallengeRequired:
-                logger.info("ChallengeRequired triggered, handling in async flow")
-                code = await get_verification_code_via_dm(INSTA_USERNAME, 1)  # Default to email
-                if code:
-                    insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=code)
-                    insta.dump_settings("session.json")
-                    logger.info("Logged into Instagram successfully after challenge")
-                else:
-                    raise Exception("Failed to obtain verification code")
-            except Exception as e:
-                logger.error(f"Login error: {e}")
-                await app.send_message(BOT_OWNER_ID, f"Instagram login failed: {e}")
-                exit(1)
+        if load_session():
+            logger.info("Loaded existing Instagram session")
+            return True
+        insta.login(username, password, verification_code=two_factor_code)
+        save_session()
+        logger.info("Instagram login successful")
+        return True
+    except TwoFactorRequired:
+        logger.info("2FA required")
+        return "2FA_REQUIRED"
+    except ChallengeRequired as e:
+        logger.info("Challenge code required")
+        CHALLENGE_STATE = e  # Store challenge state
+        return "CHALLENGE_REQUIRED"
     except Exception as e:
         logger.error(f"Instagram login failed: {e}")
-        await app.send_message(BOT_OWNER_ID, f"Instagram login failed: {e}")
-        exit(1)
+        return False
 
-# Handle login code response from bot owner
-@app.on_message(filters.user(BOT_OWNER_ID) & filters.text & filters.private)
-async def handle_login_code(client, message):
-    global login_code, login_code_message_id
-    if login_code_message_id and message.reply_to_message and message.reply_to_message.id == login_code_message_id:
-        code = message.text.strip()
-        if re.match(r"^\d{6}$", code):
-            login_code = code
-            logger.info(f"Received login code: {login_code}")
-            await message.reply_text("Login code received, processing login...")
-        else:
-            await message.reply_text("Invalid login code. Please reply with a 6-digit code (e.g., 123456).")
-    # Ignore other messages from the owner to avoid processing non-login-code replies
-
-# Function to validate Instagram Reel URL
-def is_valid_reel_url(url):
-    return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+/?", url))
-
-# Function to download Instagram Reel
-async def download_reel(url):
+# Telegram command to set Instagram credentials
+@app.on_message(filters.command("set_insta_credentials") & filters.user(OWNER_ID))
+async def set_credentials(client: Client, message: Message):
+    global INSTA_CREDENTIALS, TWO_FACTOR_CHAT, CHALLENGE_CHAT
     try:
-        media_pk = insta.media_pk_from_url(url)
-        media = insta.media_info(media_pk)
-        
-        if media.media_type == 2:  # Video (Reel)
-            video_url = media.video_url
-            if video_url:
-                file_path = f"reel_{media_pk}.mp4"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }
-                response = requests.get(video_url, headers=headers, stream=True)
-                if response.status_code == 200:
-                    with open(file_path, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-                    return file_path
-                else:
-                    logger.error(f"Failed to download video: HTTP {response.status_code}")
-                    return None
-            else:
-                return None
+        args = message.text.split(maxsplit=2)[1:]
+        if len(args) != 2:
+            await message.reply_text("Usage: /set_insta_credentials <username> <password>")
+            return
+        username, password = args
+        INSTA_CREDENTIALS = {"username": username, "password": password}
+        result = await login_instagram(username, password)
+        if result == "2FA_REQUIRED":
+            TWO_FACTOR_CHAT = message.chat.id
+            await message.reply_text("2FA code required. Please send the code using /submit_2fa <code>")
+        elif result == "CHALLENGE_REQUIRED":
+            CHALLENGE_CHAT = message.chat.id
+            await message.reply_text("Instagram challenge code required (check SMS/email). Please send the code using /submit_challenge <code>")
+        elif result:
+            await message.reply_text("Instagram credentials set and login successful!")
         else:
-            return None
+            await message.reply_text("Instagram login failed. Check credentials.")
     except Exception as e:
-        logger.error(f"Error downloading reel: {e}")
-        return None
+        await message.reply_text(f"Error: {e}")
 
-# Handle /start command
+# Telegram command to submit 2FA code
+@app.on_message(filters.command("submit_2fa") & filters.user(OWNER_ID))
+async def submit_2fa(client: Client, message: Message):
+    global TWO_FACTOR_CHAT
+    try:
+        args = message.text.split(maxsplit=1)
+        if len(args) != 2:
+            await message.reply_text("Usage: /submit_2fa <code>")
+            return
+        code = args[1]
+        result = await login_instagram(INSTA_CREDENTIALS["username"], INSTA_CREDENTIALS["password"], two_factor_code=code)
+        if result == "CHALLENGE_REQUIRED":
+            global CHALLENGE_CHAT
+            CHALLENGE_CHAT = message.chat.id
+            await message.reply_text("Instagram challenge code required (check SMS/email). Please send the code using /submit_challenge <code>")
+        elif result:
+            await message.reply_text("2FA verified and Instagram login successful!")
+            TWO_FACTOR_CHAT = None
+        else:
+            await message.reply_text("2FA verification failed. Try again.")
+    except Exception as e:
+        await message.reply_text(f"Error: {e}")
+
+# Telegram command to submit challenge code
+@app.on_message(filters.command("submit_challenge") & filters.user(OWNER_ID))
+async def submit_challenge(client: Client, message: Message):
+    global CHALLENGE_CHAT, CHALLENGE_STATE
+    try:
+        args = message.text.split(maxsplit=1)
+        if len(args) != 2:
+            await message.reply_text("Usage: /submit_challenge <code>")
+            return
+        code = args[1]
+        if not CHALLENGE_STATE:
+            await message.reply_text("No active challenge request. Try setting credentials again with /set_insta_credentials.")
+            return
+        try:
+            insta.challenge_resolve(CHALLENGE_STATE, code)
+            save_session()
+            await message.reply_text("Challenge code verified and Instagram login successful!")
+            CHALLENGE_CHAT = None
+            CHALLENGE_STATE = None
+        except Exception as e:
+            await message.reply_text(f"Challenge code verification failed: {e}. Try again or set credentials again.")
+    except Exception as e:
+        await message.reply_text(f"Error: {e}")
+
+# Telegram command to download Instagram content
+@app.on_message(filters.text & filters.regex(r"https?://(www\.)?instagram\.com/(p|reel|stories)/"))
+async def download_content(client: Client, message: Message):
+    if not INSTA_CREDENTIALS["username"]:
+        await message.reply_text("Instagram credentials not set. Owner must set credentials using /set_insta_credentials.")
+        return
+    try:
+        url = message.text.strip()
+        if "/stories/" in url:
+            # Handle stories
+            username = url.split("/stories/")[1].split("/")[0]
+            user_id = insta.user_id_from_username(username)
+            stories = insta.user_stories(user_id)
+            if not stories:
+                await message.reply_text("No stories found for this user.")
+                return
+            for story in stories:
+                if story.media_type == 1:  # Photo
+                    media = insta.story_download(story.pk)
+                    await client.send_photo(message.chat.id, media)
+                elif story.media_type == 2:  # Video
+                    media = insta.story_download(story.pk)
+                    await client.send_video(message.chat.id, media)
+        else:
+            # Handle posts/reels
+            media = insta.media_info(insta.media_pk_from_url(url))
+            if media.media_type == 1:  # Photo
+                media_path = insta.photo_download(media.pk)
+                await client.send_photo(message.chat.id, media_path)
+            elif media.media_type == 2:  # Video
+                media_path = insta.video_download(media.pk)
+                await client.send_video(message.chat.id, media_path)
+            elif media.media_type == 8:  # Album
+                for resource in media.resources:
+                    if resource.media_type == 1:
+                        media_path = insta.photo_download(resource.pk)
+                        await client.send_photo(message.chat.id, media_path)
+                    elif resource.media_type == 2:
+                        media_path = insta.video_download(resource.pk)
+                        await client.send_video(message.chat.id, media_path)
+        # Clean up downloaded files
+        for file in os.listdir():
+            if file.endswith((".jpg", ".mp4")):
+                os.remove(file)
+    except Exception as e:
+        logger.error(f"Error downloading content: {e}")
+        await message.reply_text(f"Error downloading content: {e}")
+
+# Start command
 @app.on_message(filters.command("start"))
-async def start(client, message):
+async def start(client: Client, message: Message):
     await message.reply_text(
-        "Hi! I'm a bot that downloads Instagram Reels. Send me a valid Instagram Reel URL to download it."
+        "Welcome to the Instagram Downloader Bot!\n"
+        "Send an Instagram post, reel, or story link to download.\n"
+        "Owner: Use /set_insta_credentials <username> <password> to set Instagram credentials.\n"
+        "If 2FA is required, use /submit_2fa <code>.\n"
+        "If a challenge code is required, use /submit_challenge <code>."
     )
 
-# Handle incoming messages with Instagram Reel URLs
-@app.on_message(filters.text & filters.private & ~filters.user(BOT_OWNER_ID))
-async def handle_reel_url(client, message):
-    url = message.text.strip()
-    
-    if not is_valid_reel_url(url):
-        await message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
-        return
-    
-    await message.reply_text("Processing your Reel URL, please wait...")
-    
-    file_path = await download_reel(url)
-    
-    if file_path and os.path.exists(file_path):
-        try:
-            if os.path.getsize(file_path) > 2_000_000_000:
-                await message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
-                os.remove(file_path)
-                return
-            await message.reply_video(
-                video=file_path,
-                caption="Here is your Instagram Reel!"
-            )
-            os.remove(file_path)
-        except Exception as e:
-            logger.error(f"Error sending video: {e}")
-            await message.reply_text(f"Error sending video: {e}")
-            if os.path.exists(file_path):
-                os.remove(file_path)
-    else:
-        await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
-
-# Main function to start the bot and HTTP server
+# Main function to run the bot
 async def main():
-    global insta
-    # Start the dummy HTTP server in a separate thread
-    http_thread = threading.Thread(target=run_http_server, daemon=True)
-    http_thread.start()
-    
     await app.start()
-    await login_instagram()
-    logger.info("Bot is running...")
-    await asyncio.Event().wait()  # Keep bot running
+    logger.info("Bot started")
+    await idle()
+    await app.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())
