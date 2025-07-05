@@ -5,7 +5,7 @@ import requests
 
 API_ID = "12380656"  # Get from https://my.telegram.org
 API_HASH = "d927c13beaaf5110f25c505b7c071273"  # Get from https://my.telegram.org
-BOT_TOKEN = "7497440658:AAEpmmyRiihvPgigWVJ2JYDF8VnYhGMFXTM"  # Get from @BotFather
+BOT_TOKEN = "8169634009:AAE6IccUkkyzWw9KG6p5v63dN9DwmOZOL2Y"  # Get from @BotFather
 
 # Instagram credentials
 INSTA_USERNAME = "rando.m8875"
