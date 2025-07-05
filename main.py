@@ -17,7 +17,7 @@ API_HASH = os.getenv("API_HASH", "d927c13beaaf5110f25c505b7c071273")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8169634009:AAE6IccUkkyzWw9KG6p5v63dN9DwmOZOL2Y")
 INSTA_USERNAME = os.getenv("INSTA_USERNAME", "rando.m8875")
 INSTA_PASSWORD = os.getenv("INSTA_PASSWORD", "Deep@123")
-BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "7899004087"))  # Replace with your Telegram user ID
+BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "YOUR_TELEGRAM_USER_ID"))  # Replace with your Telegram user ID
 
 # Initialize Pyrogram client
 app = Client(
@@ -31,6 +31,7 @@ app = Client(
 # Global variables for login code handling
 login_code = None
 login_code_message_id = None  # Track the login code prompt message ID
+insta = None  # Global InstaClient instance
 
 # Helper async function to handle Telegram DM for verification code
 async def get_verification_code_via_dm(username, choice):
@@ -40,6 +41,8 @@ async def get_verification_code_via_dm(username, choice):
     if choice not in [0, 1]:
         choice = 1  # Default to Email
     try:
+        # Request Instagram to send the verification code
+        insta.challenge_code_handler(username, choice)
         sent_message = await app.send_message(
             BOT_OWNER_ID,
             f"Instagram login requires a verification code. Check your {'email' if choice == 1 else 'phone'} and reply to this message with the 6-digit code (e.g., 123456)."
@@ -63,15 +66,22 @@ async def get_verification_code_via_dm(username, choice):
 
 # Synchronous challenge code handler for instagrapi
 def challenge_code_handler(username, choice):
-    loop = asyncio.get_event_loop()
-    code = loop.run_until_complete(get_verification_code_via_dm(username, choice))
-    return code
+    # Since this is called in a sync context, store the challenge details and let the async login handle it
+    global challenge_pending, challenge_username, challenge_choice
+    challenge_pending = True
+    challenge_username = username
+    challenge_choice = choice
+    return None  # Return None initially; the async login will handle the code retrieval
 
 # Handle Instagram login with verification code
 async def login_instagram():
-    global login_code_message_id
+    global insta, login_code_message_id, challenge_pending, challenge_username, challenge_choice
+    challenge_pending = False
+    challenge_username = None
+    challenge_choice = None
+    
     try:
-        # Set synchronous challenge code handler
+        # Initialize InstaClient
         insta = InstaClient()
         insta.delay_range = [1, 3]  # Add delay to avoid rate limits
         insta.challenge_code_handler = challenge_code_handler
@@ -83,15 +93,29 @@ async def login_instagram():
                 insta.login(INSTA_USERNAME, INSTA_PASSWORD)  # Verify session
             except ChallengeRequired:
                 logger.info("ChallengeRequired triggered during session verification")
-                # The challenge_code_handler will handle the code prompt
+                if challenge_pending:
+                    code = await get_verification_code_via_dm(challenge_username, challenge_choice)
+                    if code:
+                        insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=code)
+                        insta.dump_settings("session.json")
+                        logger.info("Logged into Instagram successfully after challenge")
+                    else:
+                        raise Exception("Failed to obtain verification code")
         else:
             try:
                 insta.login(INSTA_USERNAME, INSTA_PASSWORD)
                 insta.dump_settings("session.json")
                 logger.info("Logged into Instagram successfully")
             except ChallengeRequired:
-                logger.info("ChallengeRequired triggered, handled by challenge_code_handler")
-                # The challenge_code_handler will handle the code prompt
+                logger.info("ChallengeRequired triggered, handling in async flow")
+                if challenge_pending:
+                    code = await get_verification_code_via_dm(challenge_username, challenge_choice)
+                    if code:
+                        insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=code)
+                        insta.dump_settings("session.json")
+                        logger.info("Logged into Instagram successfully after challenge")
+                    else:
+                        raise Exception("Failed to obtain verification code")
             except Exception as e:
                 logger.error(f"Login error: {e}")
                 await app.send_message(BOT_OWNER_ID, f"Instagram login failed: {e}")
@@ -139,41 +163,7 @@ async def download_reel(url):
                             if chunk:
                                 f.write(chunk)
                     return file_path
-                else:
-                    logger.error(f"Failed to download video: HTTP {response.status_code}")
-                    return None
-            else:
-                return None
-        else:
-            return None
-    except Exception as e:
-        logger.error(f"Error downloading reel: {e}")
-        return None
-
-# Handle /start command
-@app.on_message(filters.command("start"))
-async def start(client, message):
-    await message.reply_text(
-        "Hi! I'm a bot that downloads Instagram Reels. Send me a valid Instagram Reel URL to download it."
-    )
-
-# Handle incoming messages with Instagram Reel URLs
-@app.on_message(filters.text & filters.private & ~filters.user(BOT_OWNER_ID))
-async def handle_reel_url(client, message):
-    url = message.text.strip()
-    
-    if not is_valid_reel_url(url):
-        await message.reply_text("Please send a valid Instagram Reel URL (e.g., https://www.instagram.com/reel/XXXXX/).")
-        return
-    
-    await message.reply_text("Processing your Reel URL, please wait...")
-    
-    file_path = await download_reel(url)
-    
-    if file_path and os.path.exists(file_path):
-        try:
-            if os.path.getsize(file_path) > 2_000_000_000:
-                await message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
+               stats = message.reply_text("Reel is too large for Telegram (>2GB). Try a shorter video.")
                 os.remove(file_path)
                 return
             await message.reply_video(
@@ -181,21 +171,10 @@ async def handle_reel_url(client, message):
                 caption="Here is your Instagram Reel!"
             )
             os.remove(file_path)
-        except Exception as e:
-            logger.error(f"Error sending video: {e}")
-            await message.reply_text(f"Error sending video: {e}")
-            if os.path.exists(file_path):
-                os.remove(file_path)
-    else:
-        await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
+        else:
+            await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
 
-# Main function to start the bot
-async def main():
-    global insta  # Make insta global for use in download_reel
-    await app.start()
-    await login_instagram()
-    logger.info("Bot is running...")
-    await asyncio.Event().wait()  # Keep bot running
+
 
 if __name__ == "__main__":
     asyncio.run(main())
