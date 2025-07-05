@@ -1,6 +1,8 @@
 import os
 import re
 import asyncio
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pyrogram import Client, filters
 from instagrapi import Client as InstaClient
 from instagrapi.exceptions import LoginRequired, ChallengeRequired
@@ -18,6 +20,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8169634009:AAE6IccUkkyzWw9KG6p5v63dN9DwmOZOL
 INSTA_USERNAME = os.getenv("INSTA_USERNAME", "rando.m8875")
 INSTA_PASSWORD = os.getenv("INSTA_PASSWORD", "Deep@123")
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "7899004087"))  # Replace with your Telegram user ID
+PORT = int(os.getenv("PORT", 8000))  # Render provides PORT; default to 8000 for local testing
 
 # Initialize Pyrogram client
 app = Client(
@@ -32,6 +35,20 @@ app = Client(
 login_code = None
 login_code_message_id = None  # Track the login code prompt message ID
 insta = None  # Global InstaClient instance
+
+# Dummy HTTP server to satisfy Render's port-binding requirement
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Telegram bot is running")
+
+def run_http_server():
+    server_address = ("", PORT)
+    httpd = HTTPServer(server_address, SimpleHTTPRequestHandler)
+    logger.info(f"Starting dummy HTTP server on port {PORT}")
+    httpd.serve_forever()
 
 # Helper async function to handle Telegram DM for verification code
 async def get_verification_code_via_dm(username, choice):
@@ -204,9 +221,13 @@ async def handle_reel_url(client, message):
     else:
         await message.reply_text("Failed to download the Reel. It might be private, deleted, or blocked.")
 
-# Main function to start the bot
+# Main function to start the bot and HTTP server
 async def main():
     global insta
+    # Start the dummy HTTP server in a separate thread
+    http_thread = threading.Thread(target=run_http_server, daemon=True)
+    http_thread.start()
+    
     await app.start()
     await login_instagram()
     logger.info("Bot is running...")
