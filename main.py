@@ -36,6 +36,78 @@ insta.delay_range = [1, 3]  # Add delay to avoid rate limits
 login_code = None
 login_code_message_id = None  # Track the login code prompt message ID
 
+# Custom challenge resolver to handle verification code via Telegram DM
+async def challenge_resolver(username, choice):
+    global login_code, login_code_message_id
+    logger.info(f"Challenge required for {username}, choice: {choice}")
+    # Choice: 0 = SMS, 1 = Email, default to Email
+    if choice not in [0, 1]:
+        choice = 1  # Default to Email
+    try:
+        insta.challenge_code_handler(username, choice)
+        sent_message = await app.send_message(
+            BOT_OWNER_ID,
+            f"Instagram login requires a verification code. Check your {'email' if choice == 1 else 'phone'} and reply to this message with the 6-digit code (e.g., 123456)."
+        )
+        login_code_message_id = sent_message.id
+        # Wait for login code response (up to 5 minutes)
+        for _ in range(300):
+            if login_code:
+                code = login_code
+                login_code = None  # Reset for next attempt
+                return code
+            await app.send_message(BOT_OWNER_ID, "Still waiting for the 6-digit verification code. Please reply soon.")
+            await asyncio.sleep(60)  # Check every 60 seconds
+        logger.error("Login code not received in time")
+        await app.send_message(BOT_OWNER_ID, "Login code not received in time. Please restart the bot.")
+        exit(1)
+    except Exception as e:
+        logger.error(f"Challenge resolver error: {e}")
+        await app.send_message(BOT_OWNER_ID, f"Challenge resolver error: {e}")
+        exit(1)
+
+# Handle Instagram login with verification code
+async def login_instagram():
+    global login_code_message_id
+    try:
+        # Set custom challenge resolver
+        insta.set_challenge_handler(challenge_resolver)
+        
+        if os.path.exists("session.json"):
+            insta.load_settings("session.json")
+            logger.info("Loaded Instagram session")
+            insta.login(INSTA_USERNAME, INSTA_PASSWORD)  # Verify session
+        else:
+            try:
+                insta.login(INSTA_USERNAME, INSTA_PASSWORD)
+                insta.dump_settings("session.json")
+                logger.info("Logged into Instagram successfully")
+            except ChallengeRequired:
+                logger.info("ChallengeRequired triggered, handled by challenge_resolver")
+                # The challenge_resolver will handle the code prompt
+            except Exception as e:
+                logger.error(f"Login error: {e}")
+                await app.send_message(BOT_OWNER_ID, f"Instagram login failed: {e}")
+                exit(1)
+    except Exception as e:
+        logger.error(f"Instagram login failed: {e}")
+        await app.send_message(BOT_OWNER_ID, f"Instagram login failed: {e}")
+        exit(1)
+
+# Handle login code response from bot owner
+@app.on_message(filters.user(BOT_OWNER_ID) & filters.text & filters.private)
+async def handle_login_code(client, message):
+    global login_code, login_code_message_id
+    if login_code_message_id and message.reply_to_message and message.reply_to_message.id == login_code_message_id:
+        code = message.text.strip()
+        if re.match(r"^\d{6}$", code):
+            login_code = code
+            logger.info(f"Received login code: {login_code}")
+            await message.replyTheresponse = await message.reply_text("Login code received, processing login...")
+        else:
+            await message.reply_text("Invalid login code. Please reply with a 6-digit code (e.g., 123456).")
+    # Ignore other messages from the owner to avoid processing non-login-code replies
+
 # Function to validate Instagram Reel URL
 def is_valid_reel_url(url):
     return bool(re.match(r"https?://www\.instagram\.com/reel/[\w-]+/?", url))
@@ -70,67 +142,6 @@ async def download_reel(url):
     except Exception as e:
         logger.error(f"Error downloading reel: {e}")
         return None
-
-# Handle Instagram login with verification code
-async def login_instagram():
-    global login_code, login_code_message_id
-    try:
-        if os.path.exists("session.json"):
-            insta.load_settings("session.json")
-            logger.info("Loaded Instagram session")
-            insta.login(INSTA_USERNAME, INSTA_PASSWORD)  # Verify session
-        else:
-            try:
-                insta.login(INSTA_USERNAME, INSTA_PASSWORD)
-                insta.dump_settings("session.json")
-                logger.info("Logged into Instagram successfully")
-            except ChallengeRequired:
-                logger.info("Login verification code required, sending DM to bot owner")
-                sent_message = await app.send_message(
-                    BOT_OWNER_ID,
-                    "Instagram login requires a verification code. Please reply with the 6-digit code sent to your email/phone (e.g., 123456)."
-                )
-                login_code_message_id = sent_message.id
-                # Wait for login code response (up to 5 minutes)
-                for _ in range(300):
-                    if login_code:
-                        try:
-                            insta.login(INSTA_USERNAME, INSTA_PASSWORD, verification_code=login_code)
-                            insta.dump_settings("session.json")
-                            logger.info("Logged into Instagram with verification code successfully")
-                            await app.send_message(BOT_OWNER_ID, "Login successful!")
-                            break
-                        except Exception as e:
-                            logger.error(f"Login with verification code failed: {e}")
-                            await app.send_message(BOT_OWNER_ID, f"Login failed: {e}. Please reply with a new verification code.")
-                            login_code = None
-                            login_code_message_id = (await app.send_message(
-                                BOT_OWNER_ID,
-                                "Please reply with the 6-digit verification code (e.g., 123456)."
-                            )).id
-                    await asyncio.sleep(1)
-                else:
-                    logger.error("Login code not received in time")
-                    await app.send_message(BOT_OWNER_ID, "Login code not received in time. Please restart the bot.")
-                    exit(1)
-    except Exception as e:
-        logger.error(f"Instagram login failed: {e}")
-        await app.send_message(BOT_OWNER_ID, f"Instagram login failed: {e}")
-        exit(1)
-
-# Handle login code response from bot owner
-@app.on_message(filters.user(BOT_OWNER_ID) & filters.text & filters.private)
-async def handle_login_code(client, message):
-    global login_code, login_code_message_id
-    if login_code_message_id and message.reply_to_message and message.reply_to_message.id == login_code_message_id:
-        code = message.text.strip()
-        if re.match(r"^\d{6}$", code):
-            login_code = code
-            logger.info(f"Received login code: {login_code}")
-            await message.reply_text("Login code received, processing login...")
-        else:
-            await message.reply_text("Invalid login code. Please reply with a 6-digit code (e.g., 123456).")
-    # Ignore other messages from the owner to avoid processing non-login-code replies
 
 # Handle /start command
 @app.on_message(filters.command("start"))
